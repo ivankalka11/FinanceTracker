@@ -1,7 +1,6 @@
 // ====== CONFIG — paste your deployed Web App URL + secret here ======
-const API_URL =
-  "https://script.google.com/macros/s/AKfycbzTkoavLhh0fDBaqPvSo3uNQcTzE-p91GN-ynLirR8O1pxd70zAR8P6iTPQ1PxuOa2b/exec";
-const SECRET = "Cimahi100;"; // must match Code.gs
+const API_URL = "https://script.google.com/macros/s/.../exec";
+const SECRET = ""; // must match Code.gs
 // ===================================================================
 
 // ---- category catalogue (shared by the form dropdown) ----
@@ -149,9 +148,22 @@ function renderCategoryChart() {
   canvas.style.display = "block";
 
   const palette = [
-    "#a32d2d", "#185fa5", "#0f6e56", "#92591b", "#6b3fa0",
-    "#c2701f", "#2c8c8c", "#b03a6e", "#4a7a2c", "#8a8a3a",
-    "#3a6ea5", "#9a4a2c", "#5a5a8c", "#2c8c5a", "#a05a3a", "#777",
+    "#a32d2d",
+    "#185fa5",
+    "#0f6e56",
+    "#92591b",
+    "#6b3fa0",
+    "#c2701f",
+    "#2c8c8c",
+    "#b03a6e",
+    "#4a7a2c",
+    "#8a8a3a",
+    "#3a6ea5",
+    "#9a4a2c",
+    "#5a5a8c",
+    "#2c8c5a",
+    "#a05a3a",
+    "#777",
   ];
   const colors = labels.map((_, i) => palette[i % palette.length]);
 
@@ -428,7 +440,9 @@ async function delHolding(id) {
 function renderBalances(data) {
   if (!data || !data.balances) return;
   const order = (data.accounts || []).concat(
-    Object.keys(data.balances).filter((a) => !(data.accounts || []).includes(a)),
+    Object.keys(data.balances).filter(
+      (a) => !(data.accounts || []).includes(a),
+    ),
   );
   document.getElementById("acct-balances").innerHTML = order
     .map((acc) => {

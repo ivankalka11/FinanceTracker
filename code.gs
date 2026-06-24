@@ -25,7 +25,7 @@
 // ---------- CONFIG ----------
 var SHEET_NAME = 'Transactions';
 var HOLDINGS_SHEET = 'Holdings';
-var SECRET = 'Cimahi100;';   // must match the dashboard
+var SECRET = 'YOUR_SECRET_STRING';   // must match the dashboard
 // ----------------------------
 
 // Column order in the sheet (row 1 = headers)
