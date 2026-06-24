@@ -32,7 +32,7 @@ var SECRET = 'YOUR_SECRET_STRING';   // must match the dashboard
 var HEADERS = ['id', 'date', 'type', 'category', 'description', 'amount', 'source', 'created_at', 'account'];
 
 // Your savings accounts (the bot validates against this list, case-insensitive)
-var ACCOUNTS = ['Ivan', 'Mely', 'Bersama'];
+var ACCOUNTS = []; //add your Balance Account (AccountA | Account B)
 
 // Holdings tab columns (row 1 = headers). 'id' added last so existing sheets still parse.
 var HOLDINGS_HEADERS = ['asset_type', 'ticker', 'name', 'quantity', 'buy_price', 'buy_date', 'id'];
@@ -130,7 +130,7 @@ function addTransaction_(b) {
     Number(b.amount) || 0,
     b.source || 'web',                       // web | telegram | whatsapp | ocr
     new Date(),
-    b.account || ''                          // Ivan | Mely | Bersama (blank = unassigned)
+    b.account || ''                          // AccountA | AccountB (blank = unassigned)
   ];
   sh.appendRow(row);
   return { id: id };
