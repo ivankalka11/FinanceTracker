@@ -1,0 +1,290 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Finance Dashboard</title>
+    <link rel="stylesheet" href="styles.css" />
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  </head>
+  <body>
+    <h1>Finance Dashboard</h1>
+    <p class="sub">Live data from Google Sheets</p>
+
+    <div class="filters" id="filters">
+      <button data-p="daily">Daily</button>
+      <button data-p="monthly" class="active">Monthly</button>
+      <button data-p="quarterly">Quarterly</button>
+      <button data-p="yearly">Yearly</button>
+    </div>
+
+    <!-- transfer between own accounts -->
+    <div class="add-form transfer-form" id="transfer-form">
+      <div class="head">🔁 Transfer</div>
+      <div>
+        <label>From account</label>
+        <select id="t-from">
+          <option value="Ivan">Ivan</option>
+          <option value="Mely">Mely</option>
+          <option value="Bersama">Bersama</option>
+        </select>
+      </div>
+      <div>
+        <label>To account</label>
+        <select id="t-to">
+          <option value="Ivan">Ivan</option>
+          <option value="Mely">Mely</option>
+          <option value="Bersama" selected>Bersama</option>
+        </select>
+      </div>
+      <div>
+        <label>Amount (Rp)</label>
+        <input id="t-amount" type="number" placeholder="20000" />
+      </div>
+      <div>
+        <label>Note (optional)</label>
+        <input id="t-note" placeholder="e.g. shared bills" />
+      </div>
+      <div><label>Date</label><input id="t-date" type="date" /></div>
+      <div><button onclick="addTransfer()">↔ Transfer</button></div>
+    </div>
+
+    <div class="metrics" id="metrics"></div>
+
+    <!-- expenses by category -->
+    <div class="chart-card">
+      <div class="chart-head">
+        <span class="title">Expenses by Category</span>
+        <span class="total" id="cat-total"></span>
+      </div>
+      <div class="chart-wrap">
+        <canvas id="cat-chart"></canvas>
+        <div class="chart-empty" id="cat-empty" style="display: none">
+          No expenses in this period yet.
+        </div>
+      </div>
+    </div>
+
+    <!-- add transaction -->
+    <div class="add-form">
+      <div>
+        <label>Type</label>
+        <select id="f-type" onchange="onTxnType()">
+          <option value="income">Income</option>
+          <option value="expense" selected>Expense</option>
+          <option value="invest">Investment</option>
+        </select>
+      </div>
+      <div><label>Date</label><input id="f-date" type="date" /></div>
+      <div>
+        <label>Category</label>
+        <select id="f-cat"></select>
+      </div>
+      <div>
+        <label>Description</label><input id="f-desc" placeholder="Groceries" />
+      </div>
+      <div>
+        <label>Account</label>
+        <select id="f-acct">
+          <option value="Ivan">Ivan</option>
+          <option value="Mely">Mely</option>
+          <option value="Bersama">Bersama</option>
+        </select>
+      </div>
+      <div id="f-amount-wrap">
+        <label>Amount (Rp)</label>
+        <input id="f-amount" type="number" placeholder="85000" />
+      </div>
+      <div><button onclick="addTxn()">+ Add</button></div>
+    </div>
+
+    <!-- extra fields shown only when Type = Investment -->
+    <div
+      class="add-form invest-fields"
+      id="invest-fields"
+      style="display: none"
+    >
+      <div>
+        <label>Asset type</label>
+        <select id="f-asset" onchange="onAssetTypeMain()">
+          <option value="stock">Stock (IDX)</option>
+          <option value="gold">Gold (Antam)</option>
+        </select>
+      </div>
+      <div id="f-ticker-wrap">
+        <label>Ticker</label><input id="f-ticker" placeholder="BBCA" />
+      </div>
+      <div>
+        <label>Asset name</label>
+        <input id="f-asset-name" placeholder="Bank Central Asia" />
+      </div>
+      <div>
+        <label id="f-qty-label">Quantity (shares)</label>
+        <input
+          id="f-qty"
+          type="number"
+          placeholder="100"
+          oninput="syncInvestAmount()"
+        />
+      </div>
+      <div>
+        <label id="f-buyprice-label">Buy price / share</label>
+        <input
+          id="f-buyprice"
+          type="number"
+          placeholder="9500"
+          oninput="syncInvestAmount()"
+        />
+      </div>
+      <div class="invest-total">
+        Amount auto-fills:<br /><strong id="f-invest-total">Rp 0</strong>
+      </div>
+    </div>
+
+    <div class="acct-balances" id="acct-balances"></div>
+
+    <div class="toolbar">
+      <input
+        type="search"
+        id="tbl-search"
+        placeholder="Search description or category…"
+        oninput="onTableControl()"
+      />
+      <select id="tbl-type" onchange="onTableControl()">
+        <option value="">All types</option>
+        <option value="income">Income</option>
+        <option value="expense">Expense</option>
+        <option value="invest">Investment</option>
+        <option value="transfer">Transfers</option>
+      </select>
+      <select id="acct-filter" onchange="onTableControl()">
+        <option value="">All accounts</option>
+        <option value="Ivan">Ivan</option>
+        <option value="Mely">Mely</option>
+        <option value="Bersama">Bersama</option>
+        <option value="Unassigned">Unassigned</option>
+      </select>
+      <span class="lbl">From</span>
+      <input type="date" id="tbl-from" onchange="onTableControl()" />
+      <span class="lbl">To</span>
+      <input type="date" id="tbl-to" onchange="onTableControl()" />
+      <select id="tbl-size" onchange="onTableControl()">
+        <option value="10" selected>10 / page</option>
+        <option value="25">25 / page</option>
+        <option value="50">50 / page</option>
+        <option value="100">100 / page</option>
+      </select>
+      <button class="reset-btn" onclick="resetTableControls()">Reset</button>
+    </div>
+
+    <table>
+      <thead>
+        <tr>
+          <th class="sortable" onclick="setSort('date')" data-col="date">
+            Date<span class="arrow"></span>
+          </th>
+          <th
+            class="sortable"
+            onclick="setSort('description')"
+            data-col="description"
+          >
+            Description<span class="arrow"></span>
+          </th>
+          <th
+            class="sortable"
+            onclick="setSort('category')"
+            data-col="category"
+          >
+            Category<span class="arrow"></span>
+          </th>
+          <th class="sortable" onclick="setSort('type')" data-col="type">
+            Type<span class="arrow"></span>
+          </th>
+          <th class="sortable" onclick="setSort('account')" data-col="account">
+            Account<span class="arrow"></span>
+          </th>
+          <th
+            class="sortable"
+            onclick="setSort('amount')"
+            data-col="amount"
+            style="text-align: right"
+          >
+            Amount<span class="arrow"></span>
+          </th>
+        </tr>
+      </thead>
+      <tbody id="txn-body"></tbody>
+    </table>
+    <div class="pager" id="txn-pager"></div>
+    <p class="status" id="status">Loading…</p>
+
+    <h2>📈 Investments</h2>
+    <p class="sub" id="port-status">
+      Your holdings — added via the form above when Type = Investment
+    </p>
+
+    <div class="toolbar">
+      <input
+        type="search"
+        id="h-search"
+        placeholder="Search asset or ticker…"
+        oninput="onHoldControl()"
+      />
+      <select id="h-filter-type" onchange="onHoldControl()">
+        <option value="">All assets</option>
+        <option value="stock">Stocks</option>
+        <option value="gold">Gold</option>
+      </select>
+      <select id="h-size" onchange="onHoldControl()">
+        <option value="10" selected>10 / page</option>
+        <option value="25">25 / page</option>
+        <option value="50">50 / page</option>
+      </select>
+      <button class="reset-btn" onclick="resetHoldControls()">Reset</button>
+    </div>
+
+    <table style="margin-top: 4px">
+      <thead>
+        <tr>
+          <th class="sortable" onclick="setHoldSort('label')" data-hcol="label">
+            Asset<span class="arrow"></span>
+          </th>
+          <th
+            class="sortable"
+            onclick="setHoldSort('quantity')"
+            data-hcol="quantity"
+          >
+            Qty<span class="arrow"></span>
+          </th>
+          <th
+            class="sortable"
+            onclick="setHoldSort('buyPrice')"
+            data-hcol="buyPrice"
+          >
+            Buy price<span class="arrow"></span>
+          </th>
+          <th
+            class="sortable"
+            onclick="setHoldSort('buyDate')"
+            data-hcol="buyDate"
+          >
+            Buy date<span class="arrow"></span>
+          </th>
+          <th
+            class="sortable"
+            onclick="setHoldSort('buyValue')"
+            data-hcol="buyValue"
+            style="text-align: right"
+          >
+            Buy value<span class="arrow"></span>
+          </th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody id="holdings-body"></tbody>
+    </table>
+    <div class="pager" id="holdings-pager"></div>
+
+    <script src="app.js"></script>
+  </body>
+</html>
