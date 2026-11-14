@@ -1,2 +1,14 @@
-TelegramBot/.env
+# Secrets: single root .env (see .env.example)
 .env
+TelegramBot/.env
+# Generated from .env by scripts/build_dashboard_config.py
+Dashboard/config.js
+
+# Python
+__pycache__/
+*.pyc
+botvenv/
+venv/
+
+# graphify knowledge graph output (regenerate with /graphify)
+graphify-out/

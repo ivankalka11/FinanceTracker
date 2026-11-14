@@ -8,14 +8,14 @@ The whole system is driven by a shared **Google Sheets** backend exposed through
 
 ## ⚠️ Before you do anything: rotate your credentials
 
-The `.env` and `app.js` in this project folder contain **live secrets** (bot token, API secret, Gemini key, Emas key, deployed Apps Script URL). Treat them as compromised and rotate before sharing or deploying:
+The root `.env` (and the generated `Dashboard/config.js`) contain **live secrets** (bot token, API secret, Gemini key, Emas key, deployed Apps Script URL). Treat them as compromised and rotate before sharing or deploying:
 
 - **Telegram BOT_TOKEN** — in @BotFather, send `/revoke` then `/token` to get a fresh one.
 - **GEMINI_API_KEY** — delete and regenerate in Google AI Studio.
 - **EMAS_API_KEY** — regenerate in your Emas API ID dashboard.
-- **API_SECRET** — change it in `Code.gs`, then update `.env` and `app.js` to match.
+- **API_SECRET** — change it in `Code.gs`, then update `API_SECRET` in the root `.env` and re-run `python scripts/build_dashboard_config.py`.
 
-Never commit `.env` (add it to `.gitignore`). Keep the secret out of `app.js` if you can — it ships to the browser, so anyone who opens the dashboard can read it. For a private/personal dashboard that's an accepted tradeoff; just know the API is only as private as that URL + secret.
+Never commit `.env` or `Dashboard/config.js` (both are git-ignored). Note that `API_SECRET` ships to the browser, so anyone who opens the dashboard can read it. For a private/personal dashboard that's an accepted tradeoff; just know the API is only as private as that URL + secret.
 
 ---
 
@@ -26,7 +26,8 @@ FinanceTracker/
 ├── Dashboard/
 │   ├── dashboard.html      # UI shell + styles
 │   ├── styles.css
-│   └── app.js              # all dashboard logic (CONFIG block at top)
+│   ├── app.js              # all dashboard logic (reads window.FINANCE_CONFIG)
+│   └── config.js           # GENERATED from .env (git-ignored)
 └── TelegramBot/
     ├── bot.py              # Telegram bot (commands, OCR, portfolio, transfers)
     ├── pricing.py          # market data: Antam gold buyback + IDX stock quotes
@@ -34,7 +35,7 @@ FinanceTracker/
     ├── requirements.txt    # Python deps
     ├── runtime.txt         # python-3.12.7 (for PaaS hosting)
     ├── .python-version     # 3.12.7
-    └── .env                # secrets (DO NOT COMMIT)
+    └── (secrets live in the root .env — DO NOT COMMIT)
 ```
 
 > Note: the backend lives in a separate **`Code.gs`** file inside the Google Apps Script editor — it isn't part of this folder. You need it deployed for either front-end to work.
@@ -58,7 +59,7 @@ FinanceTracker/
 4. **Deploy → New deployment → Web app**:
    - Execute as: **Me**
    - Who has access: **Anyone** (the secret is what protects it)
-5. Copy the deployed `/exec` Web App URL — you'll paste it into both the bot's `.env` and the dashboard's `app.js`.
+5. Copy the deployed `/exec` Web App URL — you'll paste it into the root `.env` as `APPS_SCRIPT_URL` (shared by the bot and the dashboard).
 
 Whenever you change `Code.gs`, redeploy (or manage the deployment so the same URL serves the new code).
 
@@ -100,7 +101,7 @@ source venv/bin/activate          # macOS/Linux
 python3 -m pip install -r requirements.txt
 ```
 
-Create a `.env` file in `TelegramBot/` (use placeholders, fill with YOUR rotated values):
+Copy `.env.example` to `.env` in the **project root** (one file for both the bot and the dashboard) and fill it with YOUR rotated values:
 
 ```env
 BOT_TOKEN=your_telegram_bot_token
@@ -120,13 +121,13 @@ ANTHROPIC_API_KEY=                     # only if OCR_PROVIDER=anthropic
 EMAS_API_KEY=your_emas_key
 ```
 
-`bot.py` reads these via `os.environ`, so load the `.env` into your shell before running. Either export the vars manually, or use a loader. Simplest cross-platform option:
+`bot.py` loads the root `.env` automatically via `TelegramBot/env_loader.py` (no extra package). Variables already set in the real environment (e.g. on a host) take precedence.
+
+For the dashboard, generate its config from the same file:
 
 ```bash
-pip install python-dotenv
+python scripts/build_dashboard_config.py
 ```
-
-…and add `from dotenv import load_dotenv; load_dotenv()` near the top of `bot.py` (above the `os.environ[...]` reads). Otherwise export each variable in your shell session first.
 
 Run it:
 
@@ -148,12 +149,13 @@ This prints whether `EMAS_API_KEY` is set and what the buyback endpoint returns.
 
 ## Step 4 — Dashboard
 
-Open `Dashboard/app.js` and set the CONFIG block at the top:
+The dashboard reads `APPS_SCRIPT_URL` and `API_SECRET` from the root `.env`. Generate its config (re-run whenever `.env` changes):
 
-```js
-const API_URL = "https://script.google.com/macros/s/XXXX/exec"; // your /exec URL
-const SECRET = "your_chosen_secret"; // must match Code.gs
+```bash
+python scripts/build_dashboard_config.py
 ```
+
+This writes `Dashboard/config.js` with only those two values; bot-only keys never reach the browser.
 
 To run locally, just open `dashboard.html` in a browser, or serve the folder:
 
@@ -205,7 +207,7 @@ Dashboard ────┘
 ## Deployment notes (planned, not yet locked in)
 
 - **Bot:** Fly.io (Singapore region, free tier, Dockerfile-based) is the leading candidate for 24/7 hosting. `runtime.txt` and `.python-version` pin Python 3.12.7 for the build. Railway was flagged as risky (credit exhaustion); AWS Free Tier has a limited credit window.
-- **Dashboard:** GitHub Pages (static hosting). Remember the secret in `app.js` becomes public — only host a dashboard you're comfortable being reachable by anyone with the URL.
+- **Dashboard:** GitHub Pages (static hosting). Since `config.js` is git-ignored, the Pages build won't include it; you'd need to generate it in the workflow from a GitHub secret. Remember the secret then becomes public — only host a dashboard you're comfortable being reachable by anyone with the URL.
 
 ---
 

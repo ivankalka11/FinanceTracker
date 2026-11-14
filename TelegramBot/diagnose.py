@@ -1,5 +1,6 @@
 """Run on the machine where your bot runs:  python diagnose_gold.py
-Loads EMAS_API_KEY from the environment (export it or load your .env first)."""
+Loads EMAS_API_KEY from the project-root .env (or the real environment)."""
+import env_loader  # noqa: F401
 import os
 import requests
 import pricing

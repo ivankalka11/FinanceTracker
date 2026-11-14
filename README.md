@@ -58,9 +58,11 @@ python3 -m pip install -r requirements.txt
 python3 bot.py
 ```
 
-**3. Dashboard** — Set `API_URL` and `SECRET` at the top of `Dashboard/app.js`, then open `dashboard.html` (or serve the folder with `python3 -m http.server`).
+**3. Dashboard** — Run `python scripts/build_dashboard_config.py` to generate `Dashboard/config.js` from the root `.env`, then open `dashboard.html` (or serve the folder with `python3 -m http.server`).
 
-### `.env` (TelegramBot/)
+### `.env` (project root, shared by bot + dashboard)
+
+Copy `.env.example` to `.env` at the project root. The bot loads it automatically; the dashboard gets `APPS_SCRIPT_URL` and `API_SECRET` via the generated `Dashboard/config.js`.
 
 ```env
 BOT_TOKEN=your_telegram_bot_token
@@ -97,10 +99,16 @@ EMAS_API_KEY=your_emas_key
 
 ## Security note
 
-Never commit your `.env` — add it to `.gitignore`. The dashboard's `SECRET` ships to the browser inside `app.js`, so anyone with the dashboard URL can read it; only host a dashboard you're comfortable being reachable by anyone who has the link.
+Never commit `.env` or `Dashboard/config.js` (both are git-ignored). The dashboard's `SECRET` ships to the browser inside `config.js`, so anyone with the dashboard URL can read it; only host a dashboard you're comfortable being reachable by anyone who has the link.
 
 ---
 
-## Known limitation
+## Transaction dates
 
-Imported / screenshot-parsed transactions currently land on **today's date** — the backend's `add` action doesn't yet accept a `date` parameter, so historical dates from imports aren't persisted. Fix path: add a `date` field to the `add` action in `Code.gs` and pass it through `api_add` in `bot.py`.
+The backend's `add` action accepts an optional `date` (`YYYY-MM-DD`) and falls back to today when it's missing. Every entry path sends one when it can:
+
+- **Dashboard form:** the date picker value.
+- **`/history` screenshots:** each parsed row's date.
+- **Receipt / payslip photos:** the date the OCR reads (the receipt date, or the payslip's pay date). The bot shows the date in the confirmation, or "today" if none was found.
+
+The bot discards dates that are malformed or in the future, so those entries fall back to today. Make sure your deployed Apps Script is the current `code.gs`: an older deployment ignores `date` and saves everything as today.

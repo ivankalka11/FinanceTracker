@@ -1,6 +1,11 @@
-// ====== CONFIG — paste your deployed Web App URL + secret here ======
-const API_URL = "https://script.google.com/macros/s/.../exec";
-const SECRET = ""; // must match Code.gs
+// ====== CONFIG — loaded from config.js (generated from the root .env) ======
+// Run `python scripts/build_dashboard_config.py` after editing .env.
+const { API_URL = "", SECRET = "" } = window.FINANCE_CONFIG || {};
+if (!API_URL || !SECRET) {
+  console.error(
+    "Dashboard config missing: run `python scripts/build_dashboard_config.py` to create Dashboard/config.js from .env"
+  );
+}
 // ===================================================================
 
 // ---- category catalogue (shared by the form dropdown) ----

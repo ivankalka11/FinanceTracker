@@ -18,9 +18,11 @@
 ============================================================
 """
 
+import env_loader  # noqa: F401  loads ../.env before any os.environ reads
 import os
 import json
 import base64
+from datetime import date as _date
 import requests
 import telebot
 from telebot import types
@@ -172,6 +174,8 @@ OCR_PROMPT = (
     'Subscriptions, Travel, Gifts & Donations, Family, Fees & Charges, Other). '
     "If you cannot confidently determine the category from the receipt, set "
     '"category" to an empty string "" instead of guessing. '
+    '"date" (the transaction date printed on the receipt as YYYY-MM-DD, else '
+    'empty string ""). '
     "If you cannot read the total, set amount to 0."
 )
 
@@ -183,7 +187,9 @@ PAYSLIP_PROMPT = (
     "Respond with ONLY a JSON object, no markdown, no prose, with keys: "
     '"amount" (number, the net take-home, no separators), '
     '"description" (employer name if visible, else "Salary"), '
-    '"category" (always "Salary"). '
+    '"category" (always "Salary"), '
+    '"date" (the pay date as YYYY-MM-DD if visible; if only the pay period '
+    'month is shown, use the last day of that month; else empty string ""). '
     "If you cannot read the net pay, set amount to 0."
 )
 
@@ -204,6 +210,15 @@ HISTORY_PROMPT = (
     "masuk/keluar. Skip running-balance figures and headers. If you can read no "
     "rows, return an empty array []."
 )
+
+
+def clean_date(value):
+    """Return `value` as YYYY-MM-DD if it is a real, non-future date, else ""."""
+    try:
+        d = _date.fromisoformat(str(value or "").strip()[:10])
+    except ValueError:
+        return ""
+    return d.isoformat() if d <= _date.today() else ""
 
 
 def _extract_json(text):
@@ -753,7 +768,7 @@ def handle_photo(message):
                 "amount": amt,
                 "category": r.get("category") or "Other",
                 "description": r.get("description") or "History",
-                "date": (r.get("date") or "").strip(),
+                "date": clean_date(r.get("date")),
                 "source": "ocr-history",
             })
 
@@ -793,6 +808,8 @@ def handle_photo(message):
         return bot.reply_to(message, f"Couldn't read the {label}: {e}")
 
     amount = data.get("amount", 0)
+    txn_date = clean_date(data.get("date"))
+    date_line = f"\nDate: {txn_date}" if txn_date else "\nDate: today"
 
     if is_payslip:
         desc = data.get("description", "Salary")
@@ -802,11 +819,11 @@ def handle_photo(message):
                                 "Add it manually with /add income <amount> Salary.")
         pending[message.chat.id] = {"type": "income", "amount": amount,
                                     "category": "Salary", "description": desc,
-                                    "source": "ocr"}
+                                    "source": "ocr", "date": txn_date}
         bot.reply_to(message,
                      f"📄 *Payslip detected*\n"
                      f"Employer: {desc}\n"
-                     f"Net take-home: {rupiah(amount)}",
+                     f"Net take-home: {rupiah(amount)}{date_line}",
                      parse_mode="Markdown")
         return ask_account(message.chat.id,
                            f"Income • {rupiah(amount)} — {desc} (Salary)")
@@ -819,14 +836,14 @@ def handle_photo(message):
                             "I couldn't find a total on that receipt. Add it manually with /add.")
     pending[message.chat.id] = {"type": "expense", "amount": amount,
                                 "category": cat or "Other", "description": desc,
-                                "source": "ocr"}
+                                "source": "ocr", "date": txn_date}
     # if the OCR couldn't read a category, ask for it with buttons first
     if not cat:
         bot.reply_to(message,
                      f"🧾 *Receipt detected*\n"
                      f"Merchant: {desc}\n"
                      f"Amount: {rupiah(amount)}\n"
-                     f"Category: _not found_",
+                     f"Category: _not found_{date_line}",
                      parse_mode="Markdown")
         return ask_receipt_category(message.chat.id,
                                     f"Expense • {rupiah(amount)} — {desc}")
@@ -834,7 +851,7 @@ def handle_photo(message):
                  f"🧾 *Receipt detected*\n"
                  f"Merchant: {desc}\n"
                  f"Amount: {rupiah(amount)}\n"
-                 f"Category: {cat}",
+                 f"Category: {cat}{date_line}",
                  parse_mode="Markdown")
     ask_account(message.chat.id,
                 f"Expense • {rupiah(amount)} — {desc} ({cat})")
@@ -997,10 +1014,12 @@ def on_account(call):
     account = call.data.split(":", 1)[1]          # '' = unassigned (Skip)
     res = api_add(item["type"], item["amount"], item["category"],
                   item["description"], source=item.get("source", "telegram"),
-                  account=account)
+                  account=account, date=item.get("date", ""))
     if res.get("ok"):
         label = item["type"].title()
         acc_line = f"\nAccount: {account}" if account else "\nAccount: (unassigned)"
+        if item.get("date"):
+            acc_line += f"\nDate: {item['date']}"
         bot.edit_message_text(
             f"✅ Saved\n{label} • {rupiah(item['amount'])}\n"
             f"{item['description']} ({item['category']}){acc_line}",
