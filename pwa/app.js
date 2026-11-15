@@ -8,7 +8,7 @@
   const $ = (sel, root = document) => root.querySelector(sel);
   const app = $("#app");
   const sheetRoot = $("#sheet-root");
-  const TABS = ["home", "stats", "portfolio", "settings", "activity"];
+  const TABS = ["home", "stats", "portfolio", "settings", "activity", "ledger"];
   let sb = null;
   let charts = [];
   let pricesDown = false;
@@ -20,6 +20,8 @@
     filter: { q: "", type: "", account: "" },
     telegram: null, // this user's Telegram link, if any
     scan: null, // rows read from a photo, reviewed one at a time: { rows, index, saved }
+    closings: [], // monthly ledger closings (all versions); see the ledger section
+    ledgerReady: false, // false until the ledger migration has been run
   };
 
   const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) =>
@@ -43,6 +45,7 @@
   };
   const initials = (name) => String(name || "?").trim().slice(0, 2).toUpperCase();
   const parseAmount = (v) => Number(String(v).replace(/[^\d]/g, "")) || 0;
+  const parseSigned = (v) => (/^\s*[-−]/.test(String(v)) ? -1 : 1) * parseAmount(v);
   const parseQty = (v) => parseFloat(String(v).replace(/\s/g, "").replace(",", ".")) || 0;
   const isNetworkError = (e) => !navigator.onLine || /failed to fetch|networkerror|load failed/i.test(String(e?.message || e));
 
@@ -58,6 +61,8 @@
     refresh: '<path d="M20 11a8 8 0 10-2.3 6.3M20 5v6h-6"/>',
     camera: '<path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/>',
     image: '<rect x="4" y="5" width="16" height="14" rx="2"/><path d="M4 16l5-5 4 4 3-3 4 4"/><circle cx="15" cy="9" r="1.2"/>',
+    lock: '<rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 018 0v3"/>',
+    next: '<path d="M9 5l7 7-7 7"/>',
   };
   const icon = (name) => `<svg class="i" viewBox="0 0 24 24" aria-hidden="true">${ICON[name]}</svg>`;
 
@@ -81,6 +86,7 @@
     store.set("ft.cache", {
       household: S.household, households: S.households, accounts: S.accounts, categories: S.categories,
       txns: S.txns, holdings: S.holdings, sales: S.sales, members: S.members, prices: S.prices,
+      closings: S.closings, ledgerReady: S.ledgerReady,
     });
   }
   function loadCache() {
@@ -106,7 +112,7 @@
 
   async function refresh() {
     const hid = S.household.id;
-    const [acc, opening, cat, tx, hold, sales, mem, tele] = await Promise.all([
+    const [acc, opening, cat, tx, hold, sales, mem, tele, led] = await Promise.all([
       sb.from("account_balances").select("*").eq("household_id", hid).order("sort_order").order("name"),
       sb.from("accounts").select("id, opening_balance").eq("household_id", hid),
       sb.from("categories").select("*").eq("household_id", hid).order("name"),
@@ -116,7 +122,12 @@
       sb.from("sales").select("*").eq("household_id", hid).order("date", { ascending: false }),
       sb.from("members").select("user_id, role").eq("household_id", hid),
       sb.from("telegram_links").select("linked_at").eq("user_id", S.session.user.id).maybeSingle(),
+      sb.from("ledger_closings").select("id, month, version, status, closing, closed_at")
+        .eq("household_id", hid).order("month", { ascending: false }),
     ]);
+    if (led.error && isNetworkError(led.error)) throw led.error;
+    S.ledgerReady = !led.error; // the table is missing until the ledger migration runs
+    S.closings = led.data || [];
     const open = Object.fromEntries(check(opening).map((a) => [a.id, Number(a.opening_balance)]));
     S.accounts = check(acc).map((a) => ({ ...a, id: a.account_id, balance: Number(a.balance), opening_balance: open[a.account_id] || 0 }));
     S.categories = check(cat);
@@ -147,12 +158,17 @@
     const pending = queue();
     if (!pending.length || !navigator.onLine) return;
     const left = [];
+    let locked = 0;
     for (const row of pending) {
-      const { _qid, ...payload } = row;
+      const { _qid, _category, ...payload } = row;
+      if (_category && !payload.category_id) {
+        try { payload.category_id = await categoryId(_category); } catch { left.push(row); continue; }
+      }
       const { error } = await sb.from("transactions").insert(payload);
-      if (error) left.push(row);
+      if (error) { left.push(row); if (/closed month/i.test(error.message)) locked += 1; }
     }
     store.set("ft.queue", left);
+    if (locked) toast(`${locked} offline entr${locked === 1 ? "y is" : "ies are"} dated in a closed month and can't sync until an owner reopens it.`);
     if (left.length < pending.length) toast(`${pending.length - left.length} offline entr${pending.length - left.length === 1 ? "y" : "ies"} synced`);
   }
 
@@ -171,6 +187,33 @@
   const accountName = (id) => S.accounts.find((a) => a.id === id)?.name || "Unassigned";
   const categoryName = (id) => S.categories.find((c) => c.id === id)?.name || "Other";
   const activeAccounts = () => S.accounts.filter((a) => !a.archived);
+  const isOwner = () => S.members.some((m) => m.user_id === S.session?.user?.id && m.role === "owner");
+
+  // ------------------------------------------------------------ ledger months
+  // Months are "YYYY-MM-01" strings, so they sort and compare as text.
+  const monthStart = (d) => d.slice(0, 7) + "-01";
+  const fullDate = (ts) => new Date(ts).toLocaleDateString("id-ID", { day: "numeric", month: "short", year: "numeric" });
+  const monthLabel = (m) => new Date(m + "T00:00:00").toLocaleDateString("id-ID", { month: "long", year: "numeric" });
+  const shiftDay = (d, n) => { const x = new Date(d + "T00:00:00"); x.setDate(x.getDate() + n); return x.toLocaleDateString("en-CA"); };
+  const addMonths = (m, n) => { const x = new Date(m + "T00:00:00"); x.setMonth(x.getMonth() + n); return x.toLocaleDateString("en-CA"); };
+  const closedMonths = () => S.closings.filter((c) => c.status === "closed");
+  const latestClosed = () => closedMonths().map((c) => c.month).sort().pop() || "";
+  // last day of the latest closed month: entries on or before it are locked
+  const lockedThrough = () => (latestClosed() ? shiftDay(addMonths(latestClosed(), 1), -1) : "");
+  const isLocked = (date) => !!lockedThrough() && date <= lockedThrough();
+  const minDate = () => (lockedThrough() ? shiftDay(lockedThrough(), 1) : "");
+
+  // The month an owner should close next, or null when none has ended yet.
+  // The first close may be any finished month; after that they go in order.
+  function nextToClose() {
+    const thisMonth = monthStart(today());
+    if (latestClosed()) {
+      const next = addMonths(latestClosed(), 1);
+      return next < thisMonth ? next : null;
+    }
+    const last = addMonths(thisMonth, -1);
+    return S.txns.some((t) => t.date < thisMonth) ? last : null;
+  }
 
   async function categoryId(name) {
     const hit = S.categories.find((c) => c.name.toLowerCase() === name.toLowerCase());
@@ -226,6 +269,53 @@
     });
   }
 
+  // ------------------------------------------------------------ motion
+  // View Transitions: a tapped card grows into the sheet it opens and closing sends it back;
+  // tabs slide the way you move. Without the API (or with reduced motion) screens just swap.
+  const reducedMotion = () => matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const motionOK = () => !!document.startViewTransition && !reducedMotion();
+  let vtRunning = false;
+  let hero = null; // { act, id } of the element the open sheet grew from
+
+  function transition(update, kind = "", after = () => {}) {
+    if (!motionOK() || vtRunning) { update(); after(); return; }
+    vtRunning = true;
+    const root = document.documentElement;
+    root.dataset.vt = kind;
+    const t = document.startViewTransition(update);
+    t.ready.catch(() => {}); // skipped transitions reject; the update still ran
+    t.updateCallbackDone.catch((e) => console.error(e));
+    t.finished.catch(() => {}).finally(() => { vtRunning = false; delete root.dataset.vt; after(); });
+  }
+
+  // Open a sheet so that it grows out of `el` (a row or card).
+  function openFrom(el, open) {
+    if (!motionOK() || vtRunning || !el) { hero = null; return open(); }
+    hero = { act: el.dataset.act, id: el.dataset.id };
+    const src = el.closest(".wcard") || el;
+    src.style.viewTransitionName = "hero";
+    transition(() => {
+      src.style.viewTransitionName = "";
+      open();
+      const m = $(".modal", sheetRoot);
+      if (m) { m.style.viewTransitionName = "hero"; m.classList.add("grown"); }
+    }, "hero");
+  }
+
+  function countUp(el, from, to) {
+    if (!el || from === to || reducedMotion()) return;
+    const t0 = performance.now(), dur = 750;
+    const step = (now) => {
+      if (!el.isConnected) return;
+      const p = Math.min(1, (now - t0) / dur), e = 1 - Math.pow(1 - p, 3);
+      el.textContent = num(from + (to - from) * e);
+      if (p < 1) requestAnimationFrame(step);
+    };
+    el.textContent = num(from);
+    requestAnimationFrame(step);
+  }
+  let shownTotal = 0;
+
   // ------------------------------------------------------------ shell + routing
   const currentTab = () => {
     const t = location.hash.slice(1);
@@ -234,7 +324,7 @@
 
   function nav(tab) {
     const item = (id, ic, label) =>
-      `<button class="${tab === id ? "on" : ""}" data-go="${id}" aria-label="${label}">${icon(ic)}</button>`;
+      `<button class="${tab === id ? "on" : ""}" data-go="${id}" aria-label="${label}">${tab === id ? `<span class="nav-ind" aria-hidden="true"></span>` : ""}${icon(ic)}</button>`;
     return `<nav class="nav">
       ${item("home", "home", "Home")}${item("stats", "stats", "Overview")}
       <button class="add" data-act="scan" aria-label="Scan a receipt">${icon("camera")}</button>
@@ -242,18 +332,26 @@
     </nav>`;
   }
 
+  let paintedView = null, enterTimer;
   function paint(tab, html) {
     charts.forEach((c) => c.destroy());
     charts = [];
     const banner = S.offline ? `<div class="banner">Offline. Showing the last saved data.</div>` : "";
     app.innerHTML = banner + html + nav(tab);
+    // a newly shown screen lets its rows rise in one after another; a data refresh does not
+    if (currentTab() !== paintedView) {
+      paintedView = currentTab();
+      app.classList.add("enter");
+      clearTimeout(enterTimer);
+      enterTimer = setTimeout(() => app.classList.remove("enter"), 1000);
+    }
   }
 
   function route() {
     if (!S.session) return viewLogin();
     if (!S.household) return viewOnboard();
     const tab = currentTab();
-    ({ home: viewHome, stats: viewStats, portfolio: viewPortfolio, settings: viewSettings, activity: viewActivity })[tab]();
+    ({ home: viewHome, stats: viewStats, portfolio: viewPortfolio, settings: viewSettings, activity: viewActivity, ledger: viewLedger })[tab]();
   }
 
   // ------------------------------------------------------------ views: auth + onboarding
@@ -290,11 +388,11 @@
   }
 
   // ------------------------------------------------------------ views: main tabs
-  function txRow(t) {
+  function txRow(t, i = 0) {
     const sign = signed(t);
     const cat = t.type.startsWith("transfer") ? "Transfer" : categoryName(t.category_id);
     const title = t.description || cat;
-    return `<button class="tx ${t._qid ? "pending" : ""}" ${t._qid ? "" : `data-act="tx" data-id="${t.id}"`}>
+    return `<button class="tx ${t._qid ? "pending" : ""}" style="--i:${Math.min(i, 12)}" ${t._qid ? "" : `data-act="tx" data-id="${t.id}"`}>
       <span class="logo">${esc(initials(title))}</span>
       <span class="body"><b>${esc(title)}</b>
         <small>${esc(dateLabel(t.date))} · ${esc(cat)} · ${esc(accountName(t.account_id))}${t._qid ? " · waiting to sync" : ""}</small></span>
@@ -331,6 +429,7 @@
     const m = summary("month");
     const email = S.session.user.email || "";
     const accts = accountStack(activeAccounts());
+    const due = S.ledgerReady && isOwner() ? nextToClose() : null;
     const recent = allRows().slice(0, 6).map(txRow).join("") ||
       `<div class="empty">No transactions yet. Tap + to add your first one.</div>`;
     paint("home", `
@@ -341,7 +440,7 @@
           <button class="icon-btn" data-act="reload" aria-label="Refresh">${icon("refresh")}</button>
         </div>
         <div><div class="balance-label">Total balance</div>
-          <div class="balance num"><small>Rp</small>${num(total)}</div></div>
+          <div class="balance num"><small>Rp</small><span id="total">${num(total)}</span></div></div>
         <div class="row">
           <button class="pill" data-act="add">${icon("plus")} Add</button>
           <button class="pill ghost" data-act="transfer">${icon("swap")} Transfer</button>
@@ -356,11 +455,15 @@
           <div class="stat"><span>Expense</span><b class="num down">${compact(m.expense)}</b></div>
           <div class="stat"><span>Invested</span><b class="num">${compact(m.invest)}</b></div>
         </div>
+        ${due ? `<button class="card due-card" data-act="statement" data-id="${due}">
+          <span class="grow"><b>Close ${esc(monthLabel(due))}</b><small>Check the figures and bank balances, then lock the month.</small></span>${icon("lock")}</button>` : ""}
       </div>
       <div class="sheet">
         <div class="row between"><h2>Recent transactions</h2><button class="link" data-go="activity">View all</button></div>
         ${recent}
       </div>`);
+    countUp($("#total"), shownTotal, total);
+    shownTotal = total;
   }
 
   function viewActivity() {
@@ -510,7 +613,7 @@
   function viewSettings() {
     const accts = accountStack(S.accounts);
     const cats = S.categories.map((c) => `<button class="chip" data-act="category" data-id="${c.id}">${esc(c.name)}</button>`).join("");
-    const isOwner = S.members.some((m) => m.user_id === S.session.user.id && m.role === "owner");
+    const owner = isOwner();
     paint("settings", `
       <div class="top">
         <h1 class="title">Settings</h1>
@@ -518,7 +621,7 @@
           <div class="row"><div class="avatar">${esc(initials(S.session.user.email))}</div>
             <div class="grow"><b>${esc(S.session.user.email)}</b><div class="muted" style="font-size:12.5px">${esc(S.household.name)} · ${S.members.length} member${S.members.length === 1 ? "" : "s"}</div></div></div>
           <div class="row">
-            ${isOwner ? `<button class="pill ghost" data-act="member">Add member</button>` : ""}
+            ${owner ? `<button class="pill ghost" data-act="member">Add member</button>` : ""}
             <button class="pill ghost" data-act="signout">Sign out</button>
           </div>
         </div>
@@ -534,9 +637,186 @@
           : "Log entries by chat or by sending a receipt photo"}</small></span>
           <button class="link" data-act="\${S.telegram ? "telegram-unlink" : "telegram-link"}">\${S.telegram ? "Unlink" : "Link Telegram"}</button></div>` : ""}
         <div class="section-label">Data</div>
-        <div class="list-row"><span class="grow">Data source<small>Google Sheets mode arrives in a later phase</small></span><span class="tag">Supabase</span></div>
+        <button class="list-row" data-go="ledger"><span class="grow">Monthly statements<small>${lockedThrough()
+          ? `Closed through ${esc(monthLabel(latestClosed()))}` : "No month closed yet"}</small></span>${icon("next")}</button>
         <div class="list-row"><span class="grow">Waiting to sync<small>Entries saved while offline</small></span><b class="num">${queue().length}</b></div>
       </div>`);
+  }
+
+  // ------------------------------------------------------------ monthly statements (ledger closing)
+  function viewLedger() {
+    const thisMonth = monthStart(today());
+    const next = nextToClose();
+    const lock = lockedThrough();
+    const oldest = S.txns.length ? monthStart(S.txns.reduce((d, t) => (t.date < d ? t.date : d), thisMonth)) : thisMonth;
+    const closed = Object.fromEntries(closedMonths().map((c) => [c.month, c]));
+    const months = [];
+    for (let m = thisMonth; m >= oldest && months.length < 240; m = addMonths(m, -1)) months.push(m);
+    const rows = months.map((m, i) => {
+      const c = closed[m];
+      const status = c ? `Closed on ${fullDate(c.closed_at)}${c.version > 1 ? ` · version ${c.version}` : ""}`
+        : m === thisMonth ? "This month, still running"
+        : lock && m <= lock ? "Locked: before the first closed month"
+        : m === next ? "Ready to close" : "Open";
+      const tag = c ? `<span class="tag ok">Closed</span>` : m === next ? `<span class="tag due">To close</span>` : "";
+      return `<button class="list-row" style="--i:${Math.min(i, 12)}" data-act="statement" data-id="${m}">
+        <span class="grow"><b>${esc(monthLabel(m))}</b><small>${esc(status)}</small></span>
+        ${c ? `<b class="num">${rp(Number(c.closing))}</b>` : ""}${tag}</button>`;
+    }).join("");
+    paint("settings", `
+      <div class="top">
+        <div class="row between">
+          <button class="icon-btn" data-go="settings" aria-label="Back">${icon("back")}</button>
+          <h1 class="title">Monthly statements</h1><span style="width:40px"></span>
+        </div>
+        ${!S.ledgerReady ? `<div class="card"><b>Not set up yet</b><span class="muted" style="font-size:13px">Run <code>supabase/migrations/20261117000000_ledger_closing.sql</code> in the Supabase SQL Editor, then refresh.</span></div>`
+          : next && isOwner() ? `<button class="card due-card" data-act="statement" data-id="${next}">
+            <span class="grow"><b>Close ${esc(monthLabel(next))}</b><small>Check the figures and bank balances, then lock the month.</small></span>${icon("lock")}</button>` : ""}
+      </div>
+      <div class="sheet">
+        <p class="hint" style="margin:0 0 4px">Closing a month saves its statement and locks every entry dated in it or earlier. Only an owner can close or reopen a month.</p>
+        ${S.ledgerReady ? rows : ""}
+      </div>`);
+  }
+
+  let lastStatement = null; // { m, st } of the statement on screen, for the CSV export
+
+  async function sheetStatement(m) {
+    if (!S.ledgerReady) return toast("Monthly statements are not set up yet");
+    const c = closedMonths().find((x) => x.month === m);
+    openSheet(monthLabel(m), `<div class="statement" id="statement" data-month="${m}">
+      <div class="scan-busy"><span class="spinner"></span> Loading the statement…</div></div>`);
+    try {
+      const evq = sb.from("ledger_closing_events").select("*").eq("household_id", S.household.id).eq("month", m).order("at", { ascending: false });
+      let st;
+      if (c) {
+        const [full, accs] = await Promise.all([
+          sb.from("ledger_closings").select("*").eq("id", c.id).single(),
+          sb.from("ledger_closing_accounts").select("*").eq("closing_id", c.id).order("sort_order"),
+        ]);
+        const snap = check(full);
+        st = {
+          closing: snap, totals: snap, savings_rate: snap.savings_rate, realized_pl: snap.realized_pl,
+          by_category: snap.by_category, checklist: snap.checklist,
+          accounts: check(accs).map((a) => ({ ...a, name: a.account_name })),
+        };
+      } else {
+        st = check(await sb.rpc("period_statement", { p_household: S.household.id, p_month: m }));
+      }
+      const events = (await evq).data || [];
+      const box = $("#statement");
+      if (!box || box.dataset.month !== m) return; // closed or replaced while loading
+      lastStatement = { m, st };
+      box.innerHTML = statementBody(m, st, events);
+    } catch (e) {
+      const box = $("#statement");
+      if (box) box.innerHTML = `<div class="error">${esc(isNetworkError(e) ? "Statements need a connection." : e.message || "Could not load the statement.")}</div>`;
+    }
+  }
+
+  function statementBody(m, st, events) {
+    const n = (v) => Number(v) || 0;
+    const T = st.totals, closed = !!st.closing, label = monthLabel(m);
+    const net = n(T.income) - n(T.expense) - n(T.invest);
+    const cell = (name, value, cls = "") => `<div><span>${name}</span><b class="num ${cls}">${value}</b></div>`;
+    const tone = (v) => (v < 0 ? "neg" : "pos");
+    const head = closed
+      ? `<p class="hint">Closed on ${esc(fullDate(st.closing.closed_at))}${st.closing.version > 1 ? ` (version ${st.closing.version})` : ""}. These are the figures saved at closing.${st.closing.note ? ` Note: ${esc(st.closing.note)}` : ""}</p>`
+      : `<p class="hint">Draft. The figures follow your entries until the month is closed.</p>`;
+    const summary = `<div class="st-grid">
+      ${cell("Opening balance", rp(n(T.opening)))}${cell("Closing balance", rp(n(T.closing)))}
+      ${cell("Income", rp(n(T.income)), "pos")}${cell("Expense", rp(-n(T.expense)), "neg")}
+      ${cell("Invested", rp(n(T.invest)))}${cell("Net", rp(net), tone(net))}
+      ${cell("Savings rate", st.savings_rate == null ? "n/a" : `${n(st.savings_rate).toLocaleString("id-ID")}%`)}
+      ${cell("Realized P&amp;L", rp(n(st.realized_pl)), tone(n(st.realized_pl)))}
+      ${closed && st.closing.portfolio_value != null ? cell("Portfolio at closing", rp(n(st.closing.portfolio_value)))
+        + cell("Unrealized P&amp;L", st.closing.unrealized_pl == null ? "at cost" : rp(n(st.closing.unrealized_pl)), tone(n(st.closing.unrealized_pl))) : ""}
+    </div>`;
+    const accounts = st.accounts.map((a) => {
+      const inflow = n(a.income) + n(a.transfer_in), out = n(a.expense) + n(a.invest) + n(a.transfer_out);
+      const bank = closed && a.bank_balance != null
+        ? `<small>Bank ${rp(n(a.bank_balance))}${n(a.difference) ? ` · differs by ${rp(n(a.difference))}${a.difference_note ? `: ${esc(a.difference_note)}` : ""}` : " · matches"}</small>` : "";
+      return `<div class="list-row"><span class="grow">${esc(a.name)}<small>Opening ${rp(n(a.opening))} · in ${compact(inflow)} · out ${compact(out)}</small>${bank}</span>
+        <b class="num">${rp(n(a.closing))}</b></div>`;
+    }).join("") || `<div class="empty">No accounts.</div>`;
+    const cats = (st.by_category || []).map((c) =>
+      `<div class="list-row"><span class="grow">${esc(c.name)}</span><b class="num">${rp(n(c.amount))}</b></div>`).join("")
+      || `<div class="empty">No expenses this month.</div>`;
+    const ck = st.checklist || {};
+    const waiting = queue().filter((q) => monthStart(q.date) === m).length;
+    const checkRow = (ok, text) => `<div class="check ${ok ? "ok" : "warn"}">${ok ? "✓" : "!"} ${text}</div>`;
+    const checklist = `<div class="section-label">Checklist${closed ? " at closing" : ""}</div>
+      ${checkRow(true, `${n(ck.entries)} entr${n(ck.entries) === 1 ? "y" : "ies"} this month`)}
+      ${checkRow(!n(ck.uncategorised), `${n(ck.uncategorised)} without a category`)}
+      ${checkRow(!n(ck.unassigned), `${n(ck.unassigned)} without an account`)}
+      ${closed ? "" : checkRow(!waiting, `${waiting} waiting to sync on this device`)}`;
+
+    let action = "";
+    if (!closed && st.can_close) {
+      const active = st.accounts.filter((a) => a.account_id && !a.archived);
+      action = `<form data-form="close">
+        <input type="hidden" name="month" value="${m}">
+        <div class="section-label">Bank balances on the last day</div>
+        <p class="hint">Enter what each bank app shows at the end of ${esc(label)}. If it differs from the books, fix the entries or say why.</p>
+        ${active.map((a) => `<div class="bank-row">
+          <label class="f">${esc(a.name)} (Rp)<input inputmode="numeric" name="bank-${a.account_id}" data-bank data-id="${a.account_id}"
+            data-name="${esc(a.name)}" data-closing="${n(a.closing)}" value="${num(n(a.closing))}" required></label>
+          <small class="diff" id="diff-${a.account_id}">Matches the books</small>
+          <input id="diffnote-${a.account_id}" placeholder="Why it differs (e.g. bank fee not recorded)" hidden>
+        </div>`).join("")}
+        <label class="f">Note (optional)<input name="note" placeholder="Anything worth remembering about this month"></label>
+        <div class="error"></div>
+        <button class="pill" type="submit">Close ${esc(label)}</button>
+        <p class="hint">After closing, entries dated in ${esc(label)} or earlier can't be added, changed or deleted until an owner reopens it.</p>
+      </form>`;
+    } else if (!closed) {
+      action = `<p class="hint">${esc(st.blocked_reason || "")}</p>`;
+    } else {
+      const canReopen = isOwner() && m === latestClosed();
+      action = `<div class="row no-print">
+          <button class="pill ghost-light" type="button" data-act="statement-print">Print or save PDF</button>
+          <button class="pill ghost-light" type="button" data-act="statement-csv" data-id="${m}">Export CSV</button>
+        </div>
+        ${canReopen ? `<form data-form="reopen">
+          <input type="hidden" name="month" value="${m}">
+          <label class="f">Reason for reopening<input name="reason" required placeholder="e.g. late receipt from the 30th"></label>
+          <div class="error"></div>
+          <button class="pill dark" type="submit">Reopen ${esc(label)}</button>
+        </form>` : ""}`;
+    }
+
+    const history = events.length ? `<div class="section-label">History</div>${events.map((e) =>
+      `<div class="list-row"><span class="grow">${e.action === "close" ? `Closed (version ${e.version})` : "Reopened"}${e.reason ? `<small>${esc(e.reason)}</small>` : ""}</span>
+        <small>${esc(new Date(e.at).toLocaleString("id-ID", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }))}</small></div>`).join("")}` : "";
+
+    return `${head}${summary}
+      <div class="section-label">Accounts</div>${accounts}
+      <div class="section-label">Expenses by category</div>${cats}
+      ${checklist}${action}${history}`;
+  }
+
+  function downloadCsv(m) {
+    if (lastStatement?.m !== m) return;
+    const st = lastStatement.st, T = st.totals;
+    const q = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
+    const lines = [
+      ["Statement", monthLabel(m)], [],
+      ["Account", "Opening", "Income", "Expense", "Invest", "Transfer in", "Transfer out", "Closing", "Bank balance", "Difference", "Note"],
+      ...st.accounts.map((a) => [a.name, a.opening, a.income, a.expense, a.invest, a.transfer_in, a.transfer_out, a.closing,
+        a.bank_balance ?? "", a.difference ?? "", a.difference_note ?? ""]),
+      ["Total", T.opening, T.income, T.expense, T.invest, T.transfer_in, T.transfer_out, T.closing], [],
+      ["Date", "Type", "Category", "Description", "Account", "Amount"],
+      ...S.txns.filter((t) => monthStart(t.date) === m).slice().reverse().map((t) =>
+        [t.date, t.type, t.type.startsWith("transfer") ? "Transfer" : categoryName(t.category_id), t.description, accountName(t.account_id), t.amount]),
+    ];
+    const blob = new Blob(["﻿" + lines.map((r) => r.map(q).join(",")).join("\r\n")], { type: "text/csv" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `statement-${m.slice(0, 7)}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
   }
 
   // ------------------------------------------------------------ bottom-sheet forms
@@ -549,7 +829,21 @@
   function closeSheet() {
     const scan = S.scan;
     S.scan = null;
-    sheetRoot.innerHTML = "";
+    const m = $(".modal", sheetRoot);
+    const back = hero;
+    hero = null;
+    if (!m || !motionOK() || vtRunning) sheetRoot.innerHTML = "";
+    else {
+      // a sheet that grew from a row shrinks back into it; any other sheet slides down
+      const morph = m.style.viewTransitionName === "hero";
+      if (!morph) m.style.viewTransitionName = "modal";
+      let target = null;
+      transition(() => {
+        if ($(".modal", sheetRoot) === m) sheetRoot.innerHTML = "";
+        const el = morph && back && app.querySelector(`[data-act="${back.act}"][data-id="${CSS.escape(back.id || "")}"]`);
+        if (el) { target = el.closest(".wcard") || el; target.style.viewTransitionName = "hero"; }
+      }, morph ? "hero" : "close", () => { if (target) target.style.viewTransitionName = ""; });
+    }
     if (scan?.saved) reload(); // a scan review was closed part-way: show what was saved
   }
 
@@ -557,14 +851,18 @@
     (allowNone ? `<option value="">None</option>` : "") +
     activeAccounts().map((a) => `<option value="${a.id}" ${a.id === selected ? "selected" : ""}>${esc(a.name)}</option>`).join("");
 
-  // `pre` prefills the form from a scan; `scan` adds the review header and Skip button.
+  // `pre` prefills the form from a scan or, with `pre.id`, from a saved transaction being edited;
+  // `scan` adds the review header and Skip button.
   function sheetAdd(type = "expense", pre = {}, scan = null) {
     if (!activeAccounts().length) return sheetAccount();
+    const editing = !!pre.id;
     const types = [["expense", "Expense"], ["income", "Income"], ["invest", "Invest"]];
     const category = pre.category ?? (type === "income" ? "Salary" : type === "invest" ? "Stocks" : "");
-    const date = pre.date && pre.date <= today() ? pre.date : today();
+    const date = pre.date && (editing || pre.date <= today()) ? pre.date : today();
     const many = scan && scan.rows.length > 1;
-    openSheet(scan ? "Check the details" : "Add transaction", `<form data-form="txn">
+    const account = editing ? pre.account || "" : store.get("ft.lastAccount", "");
+    openSheet(editing ? "Edit transaction" : scan ? "Check the details" : "Add transaction", `<form data-form="txn">
+      <input type="hidden" name="id" value="${esc(pre.id || "")}">
       <input type="hidden" name="type" id="txn-type" value="${type}">
       <input type="hidden" name="source" value="${scan ? "ocr" : "web"}">
       ${scan ? `<p class="hint">${many ? `Row ${scan.index + 1} of ${scan.rows.length}. ` : ""}${scan.engine === "smart" ? "Read by smart read." : "Read on this device."} Fix anything that is wrong; nothing is saved until you tap Save.</p>` : ""}
@@ -573,12 +871,13 @@
       <label class="f">Description<input id="txn-desc" name="description" placeholder="e.g. Indomaret" value="${esc(pre.description || "")}"></label>
       <div class="two">
         <label class="f">Category<input id="txn-category" name="category" list="cat-list" required value="${esc(category)}" placeholder="Pick or type"></label>
-        <label class="f">Account<select id="txn-account" name="account">${accountOptions(store.get("ft.lastAccount", ""))}</select></label>
+        <label class="f">Account<select id="txn-account" name="account">${accountOptions(account, editing)}</select></label>
       </div>
       <datalist id="cat-list">${S.categories.map((c) => `<option value="${esc(c.name)}">`).join("")}</datalist>
-      <label class="f">Date<input id="txn-date" name="date" type="date" value="${date}" max="${today()}" required></label>
+      <label class="f">Date<input id="txn-date" name="date" type="date" value="${date}" min="${minDate()}" max="${editing && date > today() ? date : today()}" required></label>
+      ${minDate() && date < minDate() ? `<p class="hint">${esc(monthLabel(monthStart(date)))} is closed. Pick a date from ${esc(dateLabel(minDate()))}, or ask an owner to reopen the month.</p>` : ""}
       <div class="error"></div>
-      <button class="pill" type="submit">Save</button>
+      <button class="pill" type="submit">${editing ? "Save changes" : "Save"}</button>
       ${many ? `<button class="pill ghost" type="button" data-act="scan-skip">Skip this row</button>` : ""}
       ${scan && scan.engine === "device" && !scan.saved ? `<button class="link" type="button" data-act="scan-smart">Not right? Try smart read (sends the photo to Google Gemini)</button>` : ""}
     </form>`);
@@ -766,7 +1065,7 @@
       </div>
       <label class="f">Amount (Rp)<input id="tr-amount" name="amount" inputmode="numeric" required placeholder="0" data-money></label>
       <label class="f">Note<input id="tr-note" name="note" placeholder="Optional"></label>
-      <label class="f">Date<input id="tr-date" name="date" type="date" value="${today()}" max="${today()}" required></label>
+      <label class="f">Date<input id="tr-date" name="date" type="date" value="${today()}" min="${minDate()}" max="${today()}" required></label>
       <div class="error"></div>
       <button class="pill" type="submit">Transfer</button>
     </form>`);
@@ -786,7 +1085,10 @@
         <div class="list-row"><span class="grow">Added from</span><span>${esc(t.source)}</span></div>
       </div>
       <div class="error"></div>
-      <button class="pill danger" data-act="tx-delete" data-id="${t.id}">${transfer ? "Delete both sides of this transfer" : "Delete transaction"}</button>`);
+      ${isLocked(t.date)
+        ? `<p class="hint">${icon("lock")} The books are closed through ${esc(monthLabel(latestClosed()))}, so this entry is locked. An owner can reopen the month in Settings → Monthly statements.</p>`
+        : `${transfer ? "" : `<button class="pill" data-act="tx-edit" data-id="${t.id}">Edit</button>`}
+      <button class="pill danger" data-act="tx-delete" data-id="${t.id}">${transfer ? "Delete both sides of this transfer" : "Delete transaction"}</button>`}`);
   }
 
   function sheetAccount(id) {
@@ -871,7 +1173,7 @@
       </div>
       <div class="two">
         <label class="f">Proceeds go to<select id="sell-account" name="account">${accountOptions("", true)}</select></label>
-        <label class="f">Date<input id="sell-date" name="date" type="date" value="${today()}" max="${today()}" required></label>
+        <label class="f">Date<input id="sell-date" name="date" type="date" value="${today()}" min="${minDate()}" max="${today()}" required></label>
       </div>
       <div class="error"></div>
       <button class="pill" type="submit">Sell</button>
@@ -899,6 +1201,16 @@
       if (amount <= 0) throw new Error("Enter an amount above zero.");
       const type = fd.get("type");
       const category = fd.get("category").trim() || "Other";
+      const id = fd.get("id");
+      if (id) { // editing a saved transaction: needs a connection, keeps its original source
+        const changes = {
+          date: fd.get("date"), type, description: fd.get("description").trim(), amount,
+          account_id: fd.get("account") || null, category_id: await categoryId(category),
+        };
+        check(await sb.from("transactions").update(changes).eq("id", id));
+        closeSheet();
+        return reload("Updated");
+      }
       const row = {
         household_id: S.household.id, date: fd.get("date"), type, description: fd.get("description").trim(),
         amount, source: fd.get("source") === "ocr" ? "ocr" : "web", account_id: fd.get("account") || null,
@@ -911,7 +1223,9 @@
       } catch (e) {
         if (!isNetworkError(e)) throw e;
         row.category_id = known ? known.id : null;
-        store.set("ft.queue", [{ ...row, _qid: Date.now() }, ...queue()]);
+        // a new category name is kept so it can be created when the entry syncs
+        store.set("ft.queue", [{ ...row, _qid: Date.now(), ...(known ? {} : { _category: category }) }, ...queue()]);
+        if (S.scan) { toast("Saved offline"); return scanNext(true); } // keep reviewing the other scanned rows
         closeSheet(); route();
         return toast("Saved offline. It will sync when you are back online.");
       }
@@ -975,6 +1289,44 @@
       await reload("Holding added");
     },
 
+    async close(fd, form) {
+      const m = fd.get("month");
+      const bank = {}, notes = {};
+      for (const el of form.querySelectorAll("[data-bank]")) {
+        const closing = Number(el.dataset.closing);
+        const v = parseSigned(el.value);
+        const note = $(`#diffnote-${el.dataset.id}`, form).value.trim();
+        const same = Math.round(v) === Math.round(closing);
+        if (!el.value.trim()) throw new Error(`Enter the bank balance for ${el.dataset.name}.`);
+        if (!same && !note) throw new Error(`Say why ${el.dataset.name} differs from the books, or fix the entries first.`);
+        bank[el.dataset.id] = same ? closing : v; // rounding in the field must not count as a difference
+        if (note && !same) notes[el.dataset.id] = note;
+      }
+      const btn = $("button[type=submit]", form);
+      if (form.dataset.armed !== "1") { // closing locks the month: ask for a second tap
+        form.dataset.armed = "1";
+        btn.textContent = `Tap again to close ${monthLabel(m)}`;
+        return;
+      }
+      const ps = positions();
+      const priced = ps.some((p) => p.value !== null);
+      check(await sb.rpc("close_period", {
+        p_household: S.household.id, p_month: m, p_bank: bank, p_notes: notes, p_note: fd.get("note").trim(),
+        p_portfolio_value: ps.length ? ps.reduce((s, p) => s + (p.value ?? p.cost), 0) : null,
+        p_unrealized: ps.length && priced ? ps.reduce((s, p) => s + (p.pl ?? 0), 0) : null,
+      }));
+      closeSheet();
+      await reload(`${monthLabel(m)} closed`);
+    },
+
+    async reopen(fd) {
+      const m = fd.get("month"), reason = fd.get("reason").trim();
+      if (!reason) throw new Error("Say why the month is being reopened.");
+      check(await sb.rpc("reopen_period", { p_household: S.household.id, p_month: m, p_reason: reason }));
+      closeSheet();
+      await reload(`${monthLabel(m)} reopened`);
+    },
+
     async sell(fd) {
       const qty = parseQty(fd.get("qty")), price = parseAmount(fd.get("price"));
       if (qty <= 0 || price <= 0) throw new Error("Quantity and price must be above zero.");
@@ -1023,11 +1375,22 @@
     member: sheetMember,
     close: closeSheet,
     reload: () => reload("Up to date"),
-    tx: (el) => sheetTx(el.dataset.id),
-    account: (el) => sheetAccount(el.dataset.id),
-    category: (el) => sheetCategory(el.dataset.id),
-    position: (el) => sheetPosition(Number(el.dataset.id)),
-    period: (el) => { S.period = el.dataset.id; route(); },
+    tx: (el) => openFrom(el, () => sheetTx(el.dataset.id)),
+    statement: (el) => openFrom(el, () => sheetStatement(el.dataset.id)),
+    "statement-print": () => window.print(),
+    "statement-csv": (el) => downloadCsv(el.dataset.id),
+    "tx-edit": (el) => {
+      const t = S.txns.find((x) => x.id === el.dataset.id);
+      if (!t) return;
+      sheetAdd(t.type, {
+        id: t.id, amount: t.amount, description: t.description, date: t.date, account: t.account_id,
+        category: t.category_id ? categoryName(t.category_id) : "",
+      });
+    },
+    account: (el) => (el.dataset.id ? openFrom(el, () => sheetAccount(el.dataset.id)) : sheetAccount()),
+    category: (el) => (el.dataset.id ? openFrom(el, () => sheetCategory(el.dataset.id)) : sheetCategory()),
+    position: (el) => openFrom(el, () => sheetPosition(Number(el.dataset.id))),
+    period: (el) => transition(() => { S.period = el.dataset.id; route(); }),
     card: (el) => { // bring one account card to the front without re-rendering, so it animates
       S.openAccount = el.dataset.id;
       const card = el.closest(".wcard");
@@ -1102,6 +1465,9 @@
       const t = S.txns.find((x) => x.id === el.dataset.id);
       const q = sb.from("transactions").delete();
       check(await (t.transfer_group ? q.eq("transfer_group", t.transfer_group) : q.eq("id", t.id)));
+      hero = null; // the row is gone: slide the sheet away instead of shrinking it back
+      const m = $(".modal", sheetRoot);
+      if (m) m.style.viewTransitionName = "";
       closeSheet();
       await reload("Deleted");
     },
@@ -1140,6 +1506,18 @@
     const el = ev.target;
     if (el.matches("[data-money]")) { const n = parseAmount(el.value); el.value = n ? num(n) : ""; }
     if (el.dataset.filter) { S.filter[el.dataset.filter] = el.value; renderTxList(); }
+    if (el.matches("[data-bank]")) { // closing: show how far the bank balance is from the books
+      if (/^\s*[-−]\s*$/.test(el.value)) return; // a minus sign on its own: wait for digits
+      const v = parseSigned(el.value);
+      el.value = el.value.trim() ? (v < 0 ? "-" : "") + num(Math.abs(v)) : "";
+      const diff = Math.round(v) - Math.round(Number(el.dataset.closing));
+      const out = $(`#diff-${el.dataset.id}`), note = $(`#diffnote-${el.dataset.id}`);
+      out.textContent = diff ? `Differs from the books by ${rp(diff)}` : "Matches the books";
+      out.classList.toggle("neg", !!diff);
+      note.hidden = !diff;
+      const form = el.closest("form"); // any change cancels a half-done "tap again"
+      if (form?.dataset.armed) { delete form.dataset.armed; $("button[type=submit]", form).textContent = `Close ${monthLabel(form.month.value)}`; }
+    }
   });
 
   document.addEventListener("change", (ev) => {
@@ -1150,7 +1528,14 @@
     runScan(file);
   });
 
-  window.addEventListener("hashchange", () => { closeSheet(); route(); window.scrollTo(0, 0); });
+  const TAB_ORDER = { home: 0, activity: 0.5, stats: 1, portfolio: 2, settings: 3, ledger: 3.5 };
+  let lastTab = currentTab();
+  window.addEventListener("hashchange", () => {
+    const tab = currentTab();
+    const kind = TAB_ORDER[tab] >= TAB_ORDER[lastTab] ? "forward" : "back";
+    lastTab = tab;
+    transition(() => { closeSheet(); route(); window.scrollTo(0, 0); }, kind);
+  });
   window.addEventListener("online", () => { if (S.household) reload(); });
   window.addEventListener("offline", () => { S.offline = true; if (S.household) route(); });
 
