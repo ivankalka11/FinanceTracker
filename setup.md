@@ -204,6 +204,183 @@ Dashboard ────┘
 
 ---
 
+## V2 phase 1 — Supabase database (in progress)
+
+V2 moves the default database to Supabase and keeps the Google Sheet as a second source. Phase 1 adds the database only; the bot and dashboard still use the Sheet until phase 2.
+
+1. **Create the project.** At supabase.com create a free project (region: Singapore). Save the database password in a password manager.
+2. **Create the tables and security rules.** Open **SQL Editor**, paste all of `supabase/migrations/20261114000000_init.sql`, and run it once. (With the Supabase CLI: `supabase link`, then `supabase db push`.)
+3. **Lock down sign-in.** In **Authentication → Sign In / Providers**, turn off "Allow new users to sign up" and keep Email enabled (magic link). New people join by invite only.
+4. **Add yourself.** In **Authentication → Users → Add user**, create your own user with your email.
+5. **Fill in `.env`.** From **Project Settings → API keys**, copy the project URL, the publishable key and the secret key into `SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY` and `SUPABASE_SECRET_KEY`. The secret key bypasses all security rules: it is for server-side scripts only and must never reach the dashboard.
+6. **Import the Sheet.** Activate the bot's virtual environment first (the script needs `requests`). Preview, then run for real:
+
+```bash
+python scripts/import_sheet_to_supabase.py --owner-email you@example.com --household "Keluarga" --dry-run
+python scripts/import_sheet_to_supabase.py --owner-email you@example.com --household "Keluarga"
+```
+
+The import creates the household, one account per account name found in the Sheet, the categories, and all transactions, holdings and realized P&L. It ends with a per-account balance comparison between the Sheet and Supabase. It is safe to re-run: rows are matched on their V1 id.
+
+What the migration sets up: tables `households`, `members`, `accounts`, `categories`, `transactions`, `holdings`, `sales`, `receipts`, `telegram_links`; a rule on every table that only household members can read or write its rows; the `account_balances` view; and the functions `create_household`, `add_member_by_email`, `add_transfer` and `sell_holding`.
+
+---
+
+## V2 phase 2 — the PWA (in progress)
+
+The new phone-first app lives in `pwa/` and talks straight to Supabase. It is plain HTML, CSS and JavaScript with no build step. The V1 `Dashboard/` is untouched and still uses the Sheet.
+
+**Run it locally**
+
+```bash
+python scripts/build_pwa_config.py
+python -m http.server 5173 --directory pwa
+```
+
+Then open `http://localhost:5173`. The first command writes `pwa/config.js` (Supabase URL and publishable key only) and the PNG app icons. Re-run it when those values change. Sign in with the user you created in Supabase.
+
+**What it does**
+
+- Home: total balance, your accounts, this month's income/expense/invested, recent transactions.
+- Add income, expense or invest entries; transfer between accounts; delete entries.
+- Overview: period totals, a 6-month income and expense chart, expenses by category.
+- Portfolio: positions with average cost, add a holding, sell (oldest lots first), realized P&L.
+- Settings: add, rename, archive accounts and set opening balances; manage categories; add a household member; sign out.
+- Installable (Add to Home Screen), opens offline with the last loaded data, and queues new entries made offline until the connection returns.
+
+**Live prices (optional for now)**
+
+Until the `prices` function is deployed, holdings show at cost. To turn on live gold and stock prices, deploy `supabase/functions/prices/index.ts`:
+
+```bash
+npx supabase login
+npx supabase link --project-ref YOUR_PROJECT_ID
+npx supabase secrets set EMAS_API_KEY=your_emas_key
+npx supabase functions deploy prices
+```
+
+**Sign-in by email link**
+
+Password sign-in works out of the box. For the "Email me a sign-in link" button, add the app's address under **Authentication → URL Configuration** (Site URL and Redirect URLs), for example `http://localhost:5173` and later your hosted address.
+
+**Hosting (Cloudflare Pages)**
+
+The simplest route uploads the `pwa` folder straight from your computer. No GitHub push is needed, and you need a free Cloudflare account.
+
+1. Make sure `pwa/config.js` is current: `python scripts/build_pwa_config.py`.
+2. Log in once (a browser window opens):
+
+```bash
+npx wrangler login
+```
+
+3. Pick your own project name and put it in `.env` as `CLOUDFLARE_PAGES_PROJECT=` (lowercase letters, numbers and dashes). It becomes the address `https://<name>.pages.dev`.
+4. Upload. The first run asks to create the project; answer yes, and when it asks for the production branch, type `main`. If the name is already taken on pages.dev, Cloudflare adds a suffix to the address (for example `<name>-4ud.pages.dev`); the upload prints the real one.
+
+```bash
+python scripts/deploy_pwa.py
+```
+
+The script rebuilds `pwa/config.js` and then runs `npx wrangler pages deploy pwa --project-name <name> --branch main --commit-dirty=true` for you.
+
+5. In Supabase, open **Authentication → URL Configuration** and set **Site URL** to the new address (also add it under Redirect URLs). Password sign-in works without this; the email sign-in link needs it.
+6. On your phone, open the address, sign in, then use **Add to Home Screen**.
+
+If the main address shows "404" after an upload, the upload went to a preview because the project's production branch is not the branch the script used. Wrangler-created projects use the git branch you were on when the project was first created. Either set `CLOUDFLARE_PAGES_BRANCH=` in `.env` to that branch name, or change **Production branch** to `main` in the Cloudflare dashboard (**Workers & Pages -> your project -> Settings**), then upload again.
+
+For every later release, bump `VERSION` in `pwa/sw.js` and run the step 4 command again.
+
+`pwa/_headers` tells Cloudflare to send security headers: a content security policy that only allows the app's own files, the two pinned libraries, Google Fonts and Supabase; no framing by other sites; no search-engine indexing. The address is public, so anyone can open the sign-in page, but data is only returned to signed-in household members.
+
+Alternative (auto-deploy on push): connect the GitHub repo in Cloudflare Pages, set the build command to `python scripts/build_pwa_config.py`, the output directory to `pwa`, and add `SUPABASE_URL` and `SUPABASE_PUBLISHABLE_KEY` as environment variables.
+
+---
+
+## V2 phase 3 - scanning in the app (in progress)
+
+The centre button in the bottom bar opens **Scan**. Pick Receipt, Payslip or History, take a photo or choose one, and the app shows a "Check the details" sheet filled in from the photo. Nothing is saved until you tap Save. A History screenshot is reviewed one row at a time (Save or Skip). Manual entry stays on the Home **Add** button.
+
+**How a photo is read**
+
+1. **On the device (default).** The text is read by PaddleOCR (open source, PP-OCRv6 "tiny" models) running inside the app. No key, no server, no daily limit, and the photo is not uploaded. After the first scan it also works offline.
+2. **Rules turn the text into fields** (`pwa/receipt-parser.js`): the total line, the date, the shop name. The category comes from your own history first (the same shop last time), then from a small keyword list.
+3. **Smart read (optional).** If the result is wrong, "Try smart read" sends that photo to the `ocr` Supabase function, which asks Google Gemini. This is the only path that uploads the photo.
+
+**Set up on-device reading (once per computer)**
+
+```bash
+python scripts/fetch_ocr_models.py
+```
+
+This downloads three model files (about 6.4 MB) into `pwa/models/`. The folder is git-ignored; `scripts/deploy_pwa.py` runs this step for you before each upload.
+
+**Set up smart read (optional)**
+
+1. In the Supabase dashboard, open **SQL Editor**, paste the contents of `supabase/migrations/20261115000000_ocr_usage.sql`, and run it. This adds the daily limit (30 smart reads per user per day; change `v_limit` in that file to adjust).
+2. Deploy the function from the project folder:
+
+```bash
+npx supabase login
+npx supabase link --project-ref YOUR_PROJECT_ID
+npx supabase secrets set GEMINI_API_KEY=your_gemini_key
+npx supabase functions deploy ocr
+```
+
+Without these, on-device scanning still works and "Try smart read" reports that it is not set up.
+
+**Good to know**
+
+- On-device rules are best-effort. Clear printed receipts work well; crumpled or faded receipts, unusual layouts, and long history screenshots are where smart read helps.
+- The first scan downloads the reading engine (a few MB from jsDelivr) and is slower; later scans take a couple of seconds.
+- A phone camera only opens on an HTTPS address, so host the app (see Cloudflare Pages above) before testing on a phone. On the computer, "Choose from gallery" works with image files.
+- Gemini's free tier may use submitted images to improve Google's products. That applies to smart read only.
+- Check the rules after changing them: `node tests/receipt_parser_test.js`.
+
+---
+
+## V2 phase 4 - the Telegram bot on Supabase (shelved)
+
+> Not in use. Scanning in the app covers the same need, so this is parked: the code is in the repo but nothing is deployed, and the "Telegram bot" row in Settings is hidden unless `TELEGRAM_BOT: true` is added to `pwa/config.js`. The steps below are kept in case it is wanted later.
+
+The bot now exists as a Supabase function, `telegram`. Telegram calls it for every message (a "webhook"), so no computer has to stay on and no bot hosting is needed. It reads and writes Supabase, uses your own accounts and categories, and shares the same photo reader and daily scan limit as the app.
+
+**Turn it on (once)**
+
+1. In the Supabase dashboard, open **SQL Editor**, paste the contents of `supabase/migrations/20261116000000_telegram.sql`, and run it.
+2. From the project folder (after `npx supabase login` and `npx supabase link`), run:
+
+```bash
+python scripts/setup_telegram_webhook.py
+```
+
+The script creates `TELEGRAM_WEBHOOK_SECRET` in `.env` if it is missing, stores the bot token, that secret, and the Gemini and Emas keys as Supabase secrets, deploys the function, and points Telegram at it. It prints no secret values.
+
+3. The `ocr` and `prices` functions now share code with the bot. Redeploy them so all three run the same version:
+
+```bash
+npx supabase functions deploy ocr
+```
+
+```bash
+npx supabase functions deploy prices
+```
+
+4. In the app, open **Settings -> Link Telegram**. It shows a message such as `/link ABCD1234`. Send that to your bot within 10 minutes. Each household member links their own Telegram account this way.
+
+**Using it**
+
+- Send a receipt photo, or `/add expense 85000 lunch at warung`. The bot asks for the category and the account with buttons, then saves.
+- `/payslip` or `/history`, then a photo. History rows are reviewed one card at a time (Keep, Rename, Skip).
+- `/transfer`, `/sell`, `/portfolio`, `/realized`, `/accounts`, `/summary`, `/recent` work as before. `/cancel` drops whatever is in progress; `/unlink` disconnects your Telegram account.
+
+**Good to know**
+
+- Once the webhook is on, the old Python bot (`TelegramBot/bot.py`) stops receiving messages; a bot can use only one of the two. To go back: `python scripts/setup_telegram_webhook.py --off`. To see the current state: `--status`.
+- The bot answers only people who have linked from the app, and only in private chats. Everyone else gets a "this bot is private" reply.
+- Entries are saved with source `telegram` (typed) or `telegram-ocr` (from a photo).
+
+---
+
 ## Deployment notes (planned, not yet locked in)
 
 - **Bot:** Fly.io (Singapore region, free tier, Dockerfile-based) is the leading candidate for 24/7 hosting. `runtime.txt` and `.python-version` pin Python 3.12.7 for the build. Railway was flagged as risky (credit exhaustion); AWS Free Tier has a limited credit window.
