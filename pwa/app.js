@@ -148,7 +148,10 @@
     if (!pending.length || !navigator.onLine) return;
     const left = [];
     for (const row of pending) {
-      const { _qid, ...payload } = row;
+      const { _qid, _category, ...payload } = row;
+      if (_category && !payload.category_id) {
+        try { payload.category_id = await categoryId(_category); } catch { left.push(row); continue; }
+      }
       const { error } = await sb.from("transactions").insert(payload);
       if (error) left.push(row);
     }
@@ -226,6 +229,53 @@
     });
   }
 
+  // ------------------------------------------------------------ motion
+  // View Transitions: a tapped card grows into the sheet it opens and closing sends it back;
+  // tabs slide the way you move. Without the API (or with reduced motion) screens just swap.
+  const reducedMotion = () => matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const motionOK = () => !!document.startViewTransition && !reducedMotion();
+  let vtRunning = false;
+  let hero = null; // { act, id } of the element the open sheet grew from
+
+  function transition(update, kind = "", after = () => {}) {
+    if (!motionOK() || vtRunning) { update(); after(); return; }
+    vtRunning = true;
+    const root = document.documentElement;
+    root.dataset.vt = kind;
+    const t = document.startViewTransition(update);
+    t.ready.catch(() => {}); // skipped transitions reject; the update still ran
+    t.updateCallbackDone.catch((e) => console.error(e));
+    t.finished.catch(() => {}).finally(() => { vtRunning = false; delete root.dataset.vt; after(); });
+  }
+
+  // Open a sheet so that it grows out of `el` (a row or card).
+  function openFrom(el, open) {
+    if (!motionOK() || vtRunning || !el) { hero = null; return open(); }
+    hero = { act: el.dataset.act, id: el.dataset.id };
+    const src = el.closest(".wcard") || el;
+    src.style.viewTransitionName = "hero";
+    transition(() => {
+      src.style.viewTransitionName = "";
+      open();
+      const m = $(".modal", sheetRoot);
+      if (m) { m.style.viewTransitionName = "hero"; m.classList.add("grown"); }
+    }, "hero");
+  }
+
+  function countUp(el, from, to) {
+    if (!el || from === to || reducedMotion()) return;
+    const t0 = performance.now(), dur = 750;
+    const step = (now) => {
+      if (!el.isConnected) return;
+      const p = Math.min(1, (now - t0) / dur), e = 1 - Math.pow(1 - p, 3);
+      el.textContent = num(from + (to - from) * e);
+      if (p < 1) requestAnimationFrame(step);
+    };
+    el.textContent = num(from);
+    requestAnimationFrame(step);
+  }
+  let shownTotal = 0;
+
   // ------------------------------------------------------------ shell + routing
   const currentTab = () => {
     const t = location.hash.slice(1);
@@ -234,7 +284,7 @@
 
   function nav(tab) {
     const item = (id, ic, label) =>
-      `<button class="${tab === id ? "on" : ""}" data-go="${id}" aria-label="${label}">${icon(ic)}</button>`;
+      `<button class="${tab === id ? "on" : ""}" data-go="${id}" aria-label="${label}">${tab === id ? `<span class="nav-ind" aria-hidden="true"></span>` : ""}${icon(ic)}</button>`;
     return `<nav class="nav">
       ${item("home", "home", "Home")}${item("stats", "stats", "Overview")}
       <button class="add" data-act="scan" aria-label="Scan a receipt">${icon("camera")}</button>
@@ -242,11 +292,19 @@
     </nav>`;
   }
 
+  let paintedView = null, enterTimer;
   function paint(tab, html) {
     charts.forEach((c) => c.destroy());
     charts = [];
     const banner = S.offline ? `<div class="banner">Offline. Showing the last saved data.</div>` : "";
     app.innerHTML = banner + html + nav(tab);
+    // a newly shown screen lets its rows rise in one after another; a data refresh does not
+    if (currentTab() !== paintedView) {
+      paintedView = currentTab();
+      app.classList.add("enter");
+      clearTimeout(enterTimer);
+      enterTimer = setTimeout(() => app.classList.remove("enter"), 1000);
+    }
   }
 
   function route() {
@@ -290,11 +348,11 @@
   }
 
   // ------------------------------------------------------------ views: main tabs
-  function txRow(t) {
+  function txRow(t, i = 0) {
     const sign = signed(t);
     const cat = t.type.startsWith("transfer") ? "Transfer" : categoryName(t.category_id);
     const title = t.description || cat;
-    return `<button class="tx ${t._qid ? "pending" : ""}" ${t._qid ? "" : `data-act="tx" data-id="${t.id}"`}>
+    return `<button class="tx ${t._qid ? "pending" : ""}" style="--i:${Math.min(i, 12)}" ${t._qid ? "" : `data-act="tx" data-id="${t.id}"`}>
       <span class="logo">${esc(initials(title))}</span>
       <span class="body"><b>${esc(title)}</b>
         <small>${esc(dateLabel(t.date))} · ${esc(cat)} · ${esc(accountName(t.account_id))}${t._qid ? " · waiting to sync" : ""}</small></span>
@@ -341,7 +399,7 @@
           <button class="icon-btn" data-act="reload" aria-label="Refresh">${icon("refresh")}</button>
         </div>
         <div><div class="balance-label">Total balance</div>
-          <div class="balance num"><small>Rp</small>${num(total)}</div></div>
+          <div class="balance num"><small>Rp</small><span id="total">${num(total)}</span></div></div>
         <div class="row">
           <button class="pill" data-act="add">${icon("plus")} Add</button>
           <button class="pill ghost" data-act="transfer">${icon("swap")} Transfer</button>
@@ -361,6 +419,8 @@
         <div class="row between"><h2>Recent transactions</h2><button class="link" data-go="activity">View all</button></div>
         ${recent}
       </div>`);
+    countUp($("#total"), shownTotal, total);
+    shownTotal = total;
   }
 
   function viewActivity() {
@@ -549,7 +609,21 @@
   function closeSheet() {
     const scan = S.scan;
     S.scan = null;
-    sheetRoot.innerHTML = "";
+    const m = $(".modal", sheetRoot);
+    const back = hero;
+    hero = null;
+    if (!m || !motionOK() || vtRunning) sheetRoot.innerHTML = "";
+    else {
+      // a sheet that grew from a row shrinks back into it; any other sheet slides down
+      const morph = m.style.viewTransitionName === "hero";
+      if (!morph) m.style.viewTransitionName = "modal";
+      let target = null;
+      transition(() => {
+        if ($(".modal", sheetRoot) === m) sheetRoot.innerHTML = "";
+        const el = morph && back && app.querySelector(`[data-act="${back.act}"][data-id="${CSS.escape(back.id || "")}"]`);
+        if (el) { target = el.closest(".wcard") || el; target.style.viewTransitionName = "hero"; }
+      }, morph ? "hero" : "close", () => { if (target) target.style.viewTransitionName = ""; });
+    }
     if (scan?.saved) reload(); // a scan review was closed part-way: show what was saved
   }
 
@@ -557,14 +631,18 @@
     (allowNone ? `<option value="">None</option>` : "") +
     activeAccounts().map((a) => `<option value="${a.id}" ${a.id === selected ? "selected" : ""}>${esc(a.name)}</option>`).join("");
 
-  // `pre` prefills the form from a scan; `scan` adds the review header and Skip button.
+  // `pre` prefills the form from a scan or, with `pre.id`, from a saved transaction being edited;
+  // `scan` adds the review header and Skip button.
   function sheetAdd(type = "expense", pre = {}, scan = null) {
     if (!activeAccounts().length) return sheetAccount();
+    const editing = !!pre.id;
     const types = [["expense", "Expense"], ["income", "Income"], ["invest", "Invest"]];
     const category = pre.category ?? (type === "income" ? "Salary" : type === "invest" ? "Stocks" : "");
-    const date = pre.date && pre.date <= today() ? pre.date : today();
+    const date = pre.date && (editing || pre.date <= today()) ? pre.date : today();
     const many = scan && scan.rows.length > 1;
-    openSheet(scan ? "Check the details" : "Add transaction", `<form data-form="txn">
+    const account = editing ? pre.account || "" : store.get("ft.lastAccount", "");
+    openSheet(editing ? "Edit transaction" : scan ? "Check the details" : "Add transaction", `<form data-form="txn">
+      <input type="hidden" name="id" value="${esc(pre.id || "")}">
       <input type="hidden" name="type" id="txn-type" value="${type}">
       <input type="hidden" name="source" value="${scan ? "ocr" : "web"}">
       ${scan ? `<p class="hint">${many ? `Row ${scan.index + 1} of ${scan.rows.length}. ` : ""}${scan.engine === "smart" ? "Read by smart read." : "Read on this device."} Fix anything that is wrong; nothing is saved until you tap Save.</p>` : ""}
@@ -573,12 +651,12 @@
       <label class="f">Description<input id="txn-desc" name="description" placeholder="e.g. Indomaret" value="${esc(pre.description || "")}"></label>
       <div class="two">
         <label class="f">Category<input id="txn-category" name="category" list="cat-list" required value="${esc(category)}" placeholder="Pick or type"></label>
-        <label class="f">Account<select id="txn-account" name="account">${accountOptions(store.get("ft.lastAccount", ""))}</select></label>
+        <label class="f">Account<select id="txn-account" name="account">${accountOptions(account, editing)}</select></label>
       </div>
       <datalist id="cat-list">${S.categories.map((c) => `<option value="${esc(c.name)}">`).join("")}</datalist>
-      <label class="f">Date<input id="txn-date" name="date" type="date" value="${date}" max="${today()}" required></label>
+      <label class="f">Date<input id="txn-date" name="date" type="date" value="${date}" max="${editing && date > today() ? date : today()}" required></label>
       <div class="error"></div>
-      <button class="pill" type="submit">Save</button>
+      <button class="pill" type="submit">${editing ? "Save changes" : "Save"}</button>
       ${many ? `<button class="pill ghost" type="button" data-act="scan-skip">Skip this row</button>` : ""}
       ${scan && scan.engine === "device" && !scan.saved ? `<button class="link" type="button" data-act="scan-smart">Not right? Try smart read (sends the photo to Google Gemini)</button>` : ""}
     </form>`);
@@ -786,6 +864,7 @@
         <div class="list-row"><span class="grow">Added from</span><span>${esc(t.source)}</span></div>
       </div>
       <div class="error"></div>
+      ${transfer ? "" : `<button class="pill" data-act="tx-edit" data-id="${t.id}">Edit</button>`}
       <button class="pill danger" data-act="tx-delete" data-id="${t.id}">${transfer ? "Delete both sides of this transfer" : "Delete transaction"}</button>`);
   }
 
@@ -899,6 +978,16 @@
       if (amount <= 0) throw new Error("Enter an amount above zero.");
       const type = fd.get("type");
       const category = fd.get("category").trim() || "Other";
+      const id = fd.get("id");
+      if (id) { // editing a saved transaction: needs a connection, keeps its original source
+        const changes = {
+          date: fd.get("date"), type, description: fd.get("description").trim(), amount,
+          account_id: fd.get("account") || null, category_id: await categoryId(category),
+        };
+        check(await sb.from("transactions").update(changes).eq("id", id));
+        closeSheet();
+        return reload("Updated");
+      }
       const row = {
         household_id: S.household.id, date: fd.get("date"), type, description: fd.get("description").trim(),
         amount, source: fd.get("source") === "ocr" ? "ocr" : "web", account_id: fd.get("account") || null,
@@ -911,7 +1000,9 @@
       } catch (e) {
         if (!isNetworkError(e)) throw e;
         row.category_id = known ? known.id : null;
-        store.set("ft.queue", [{ ...row, _qid: Date.now() }, ...queue()]);
+        // a new category name is kept so it can be created when the entry syncs
+        store.set("ft.queue", [{ ...row, _qid: Date.now(), ...(known ? {} : { _category: category }) }, ...queue()]);
+        if (S.scan) { toast("Saved offline"); return scanNext(true); } // keep reviewing the other scanned rows
         closeSheet(); route();
         return toast("Saved offline. It will sync when you are back online.");
       }
@@ -1023,11 +1114,19 @@
     member: sheetMember,
     close: closeSheet,
     reload: () => reload("Up to date"),
-    tx: (el) => sheetTx(el.dataset.id),
-    account: (el) => sheetAccount(el.dataset.id),
-    category: (el) => sheetCategory(el.dataset.id),
-    position: (el) => sheetPosition(Number(el.dataset.id)),
-    period: (el) => { S.period = el.dataset.id; route(); },
+    tx: (el) => openFrom(el, () => sheetTx(el.dataset.id)),
+    "tx-edit": (el) => {
+      const t = S.txns.find((x) => x.id === el.dataset.id);
+      if (!t) return;
+      sheetAdd(t.type, {
+        id: t.id, amount: t.amount, description: t.description, date: t.date, account: t.account_id,
+        category: t.category_id ? categoryName(t.category_id) : "",
+      });
+    },
+    account: (el) => (el.dataset.id ? openFrom(el, () => sheetAccount(el.dataset.id)) : sheetAccount()),
+    category: (el) => (el.dataset.id ? openFrom(el, () => sheetCategory(el.dataset.id)) : sheetCategory()),
+    position: (el) => openFrom(el, () => sheetPosition(Number(el.dataset.id))),
+    period: (el) => transition(() => { S.period = el.dataset.id; route(); }),
     card: (el) => { // bring one account card to the front without re-rendering, so it animates
       S.openAccount = el.dataset.id;
       const card = el.closest(".wcard");
@@ -1102,6 +1201,9 @@
       const t = S.txns.find((x) => x.id === el.dataset.id);
       const q = sb.from("transactions").delete();
       check(await (t.transfer_group ? q.eq("transfer_group", t.transfer_group) : q.eq("id", t.id)));
+      hero = null; // the row is gone: slide the sheet away instead of shrinking it back
+      const m = $(".modal", sheetRoot);
+      if (m) m.style.viewTransitionName = "";
       closeSheet();
       await reload("Deleted");
     },
@@ -1150,7 +1252,14 @@
     runScan(file);
   });
 
-  window.addEventListener("hashchange", () => { closeSheet(); route(); window.scrollTo(0, 0); });
+  const TAB_ORDER = { home: 0, activity: 0.5, stats: 1, portfolio: 2, settings: 3 };
+  let lastTab = currentTab();
+  window.addEventListener("hashchange", () => {
+    const tab = currentTab();
+    const kind = TAB_ORDER[tab] >= TAB_ORDER[lastTab] ? "forward" : "back";
+    lastTab = tab;
+    transition(() => { closeSheet(); route(); window.scrollTo(0, 0); }, kind);
+  });
   window.addEventListener("online", () => { if (S.household) reload(); });
   window.addEventListener("offline", () => { S.offline = true; if (S.household) route(); });
 

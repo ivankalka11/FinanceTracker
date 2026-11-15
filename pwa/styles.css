@@ -186,8 +186,8 @@ form { display: flex; flex-direction: column; gap: 12px; }
   display: flex; align-items: center; justify-content: space-around; padding: 0 6px; z-index: 20;
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
 }
-.nav button { width: 48px; height: 48px; border-radius: 50%; display: grid; place-items: center; color: #fff; }
-.nav button.on { background: var(--orange); }
+.nav button { width: 48px; height: 48px; border-radius: 50%; display: grid; place-items: center; color: #fff; position: relative; isolation: isolate; }
+.nav-ind { position: absolute; inset: 0; border-radius: 50%; background: var(--orange); z-index: -1; }
 .nav button.add { color: var(--orange); }
 .nav svg.i { width: 21px; height: 21px; }
 
@@ -198,13 +198,10 @@ form { display: flex; flex-direction: column; gap: 12px; }
   background: var(--sheet); color: var(--ink); border-radius: 28px 28px 0 0;
   padding: 18px 16px calc(22px + env(safe-area-inset-bottom, 0px));
   display: flex; flex-direction: column; gap: 14px;
-  animation: rise 0.18s ease-out;
 }
 .modal header { display: flex; align-items: center; justify-content: space-between; }
 .modal header h2 { margin: 0; font-size: 17px; }
 .modal .close { width: 36px; height: 36px; border-radius: 50%; background: var(--wash); display: grid; place-items: center; color: var(--ink); }
-@keyframes rise { from { transform: translateY(24px); opacity: 0.6; } to { transform: none; opacity: 1; } }
-@media (prefers-reduced-motion: reduce) { .modal { animation: none; } }
 
 #toast {
   position: fixed; left: 50%; transform: translateX(-50%);
@@ -214,6 +211,71 @@ form { display: flex; flex-direction: column; gap: 12px; }
   z-index: 60; opacity: 0; pointer-events: none; transition: opacity 0.2s; max-width: calc(100% - 40px); text-align: center;
 }
 #toast.show { opacity: 1; }
+
+/* ---------- motion ----------
+   Nothing just appears: sheets grow out of the row or card you tapped and shrink back
+   into it, tabs slide the way you move, the nav highlight glides, rows rise in.
+   Driven by View Transitions in app.js; everything here is off with reduced motion. */
+@media (prefers-reduced-motion: no-preference) {
+  :root { --spring: cubic-bezier(0.32, 0.72, 0, 1); --ease-out: cubic-bezier(0.2, 0.8, 0.2, 1); }
+
+  /* touch feedback */
+  .tx, .pill, .chip, .icon-btn, .seg button, .nav button, button.list-row, .wc-edit, .wc-new {
+    transition: transform 0.18s var(--ease-out), background-color 0.2s, color 0.2s, border-color 0.2s, opacity 0.2s;
+  }
+  .tx:active, .pill:active, .chip:active, .icon-btn:active, .seg button:active, .nav button:active,
+  button.list-row:active, .wc-edit:active, .wc-new:active { transform: scale(0.96); }
+
+  /* plain sheets: dim fades in, sheet springs up from the bottom */
+  .overlay { animation: dim-in 0.25s ease both; }
+  .modal { animation: sheet-up 0.45s var(--spring) both; }
+  .modal.grown { animation: none; }
+
+  /* a newly shown screen: rows rise in one after another */
+  .enter .tx, .enter .card, .enter .stat, .enter .list-row, .enter .chart-box, .enter .seg {
+    animation: item-in 0.5s var(--ease-out) both;
+    animation-delay: calc(var(--i, 0) * 35ms + 40ms);
+  }
+  .enter .stat:nth-child(2) { --i: 1; }
+  .enter .stat:nth-child(3) { --i: 2; }
+
+  #toast { transform: translateX(-50%) translateY(14px) scale(0.96); transition: opacity 0.2s, transform 0.4s var(--spring); }
+  #toast.show { transform: translateX(-50%); }
+
+  /* shared elements across screens */
+  .nav { view-transition-name: nav; }
+  .nav-ind { view-transition-name: nav-ind; }
+  #app > .sheet { view-transition-name: page; }
+
+  ::view-transition-group(*) { animation-duration: 0.42s; animation-timing-function: var(--spring); }
+  ::view-transition-old(root), ::view-transition-new(root) { animation-duration: 0.3s; }
+
+  /* tabs: slide in the direction of travel */
+  html[data-vt="forward"]::view-transition-old(root) { animation: 0.28s cubic-bezier(0.4, 0, 1, 1) both vt-out-left; }
+  html[data-vt="forward"]::view-transition-new(root) { animation: 0.4s var(--ease-out) both vt-in-right; }
+  html[data-vt="back"]::view-transition-old(root) { animation: 0.28s cubic-bezier(0.4, 0, 1, 1) both vt-out-right; }
+  html[data-vt="back"]::view-transition-new(root) { animation: 0.4s var(--ease-out) both vt-in-left; }
+  ::view-transition-group(page) { overflow: clip; border-radius: 28px 28px 0 0; }
+  ::view-transition-old(page) { animation: 0.2s ease both vt-fade-out; }
+  ::view-transition-new(page) { animation: 0.35s 0.06s ease both vt-fade-in; }
+
+  /* the tapped row/card becomes the sheet, and back again */
+  ::view-transition-group(hero) { animation-duration: 0.5s; overflow: clip; border-radius: 24px; }
+  ::view-transition-old(hero) { animation: 0.22s ease both vt-fade-out; }
+  ::view-transition-new(hero) { animation: 0.3s ease both vt-fade-in; }
+  ::view-transition-old(hero):only-child, ::view-transition-old(modal):only-child { animation: 0.3s cubic-bezier(0.4, 0, 1, 1) both sheet-down; }
+
+  @keyframes dim-in { from { background: rgba(0, 0, 0, 0); } }
+  @keyframes sheet-up { from { transform: translateY(100%); } }
+  @keyframes sheet-down { to { transform: translateY(100%); } }
+  @keyframes item-in { from { opacity: 0; transform: translateY(12px); } }
+  @keyframes vt-fade-in { from { opacity: 0; } }
+  @keyframes vt-fade-out { to { opacity: 0; } }
+  @keyframes vt-out-left { to { opacity: 0; transform: translateX(-28px); } }
+  @keyframes vt-out-right { to { opacity: 0; transform: translateX(28px); } }
+  @keyframes vt-in-right { from { opacity: 0; transform: translateX(28px); } }
+  @keyframes vt-in-left { from { opacity: 0; transform: translateX(-28px); } }
+}
 
 /* ---- scan sheet ---- */
 .scan { display: grid; gap: 12px; }
