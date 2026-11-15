@@ -1,14 +1,22 @@
 # Secrets: single root .env (see .env.example)
 .env
+.env.*
+!.env.example
 TelegramBot/.env
 # Generated from .env by scripts/build_dashboard_config.py
 Dashboard/config.js
 
 # Python
 __pycache__/
-*.pyc
+*.py[cod]
 botvenv/
 venv/
+.venv/
+.pytest_cache/
+
+# Node (tests run with plain node, but keep stray installs out)
+node_modules/
+npm-debug.log*
 
 # graphify knowledge graph output (regenerate with /graphify)
 graphify-out/
@@ -25,3 +33,23 @@ pwa/models/
 
 # Supabase CLI link state (project ref, pooler address)
 supabase/.temp/
+supabase/.branches/
+
+# Claude Code: personal settings (hooks point at paths on one machine)
+.claude/settings.json
+.claude/settings.local.json
+
+# Editors
+.vscode/
+.idea/
+*.swp
+
+# OS and OneDrive clutter
+.DS_Store
+Thumbs.db
+desktop.ini
+~$*
+
+# Logs and temp files
+*.log
+*.tmp
