@@ -8,7 +8,7 @@
   const $ = (sel, root = document) => root.querySelector(sel);
   const app = $("#app");
   const sheetRoot = $("#sheet-root");
-  const TABS = ["home", "stats", "portfolio", "settings", "activity"];
+  const TABS = ["home", "stats", "portfolio", "settings", "activity", "ledger"];
   let sb = null;
   let charts = [];
   let pricesDown = false;
@@ -20,6 +20,8 @@
     filter: { q: "", type: "", account: "" },
     telegram: null, // this user's Telegram link, if any
     scan: null, // rows read from a photo, reviewed one at a time: { rows, index, saved }
+    closings: [], // monthly ledger closings (all versions); see the ledger section
+    ledgerReady: false, // false until the ledger migration has been run
   };
 
   const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) =>
@@ -43,6 +45,7 @@
   };
   const initials = (name) => String(name || "?").trim().slice(0, 2).toUpperCase();
   const parseAmount = (v) => Number(String(v).replace(/[^\d]/g, "")) || 0;
+  const parseSigned = (v) => (/^\s*[-−]/.test(String(v)) ? -1 : 1) * parseAmount(v);
   const parseQty = (v) => parseFloat(String(v).replace(/\s/g, "").replace(",", ".")) || 0;
   const isNetworkError = (e) => !navigator.onLine || /failed to fetch|networkerror|load failed/i.test(String(e?.message || e));
 
@@ -58,6 +61,8 @@
     refresh: '<path d="M20 11a8 8 0 10-2.3 6.3M20 5v6h-6"/>',
     camera: '<path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/>',
     image: '<rect x="4" y="5" width="16" height="14" rx="2"/><path d="M4 16l5-5 4 4 3-3 4 4"/><circle cx="15" cy="9" r="1.2"/>',
+    lock: '<rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 018 0v3"/>',
+    next: '<path d="M9 5l7 7-7 7"/>',
   };
   const icon = (name) => `<svg class="i" viewBox="0 0 24 24" aria-hidden="true">${ICON[name]}</svg>`;
 
@@ -81,6 +86,7 @@
     store.set("ft.cache", {
       household: S.household, households: S.households, accounts: S.accounts, categories: S.categories,
       txns: S.txns, holdings: S.holdings, sales: S.sales, members: S.members, prices: S.prices,
+      closings: S.closings, ledgerReady: S.ledgerReady,
     });
   }
   function loadCache() {
@@ -106,7 +112,7 @@
 
   async function refresh() {
     const hid = S.household.id;
-    const [acc, opening, cat, tx, hold, sales, mem, tele] = await Promise.all([
+    const [acc, opening, cat, tx, hold, sales, mem, tele, led] = await Promise.all([
       sb.from("account_balances").select("*").eq("household_id", hid).order("sort_order").order("name"),
       sb.from("accounts").select("id, opening_balance").eq("household_id", hid),
       sb.from("categories").select("*").eq("household_id", hid).order("name"),
@@ -116,7 +122,12 @@
       sb.from("sales").select("*").eq("household_id", hid).order("date", { ascending: false }),
       sb.from("members").select("user_id, role").eq("household_id", hid),
       sb.from("telegram_links").select("linked_at").eq("user_id", S.session.user.id).maybeSingle(),
+      sb.from("ledger_closings").select("id, month, version, status, closing, closed_at")
+        .eq("household_id", hid).order("month", { ascending: false }),
     ]);
+    if (led.error && isNetworkError(led.error)) throw led.error;
+    S.ledgerReady = !led.error; // the table is missing until the ledger migration runs
+    S.closings = led.data || [];
     const open = Object.fromEntries(check(opening).map((a) => [a.id, Number(a.opening_balance)]));
     S.accounts = check(acc).map((a) => ({ ...a, id: a.account_id, balance: Number(a.balance), opening_balance: open[a.account_id] || 0 }));
     S.categories = check(cat);
@@ -147,15 +158,17 @@
     const pending = queue();
     if (!pending.length || !navigator.onLine) return;
     const left = [];
+    let locked = 0;
     for (const row of pending) {
       const { _qid, _category, ...payload } = row;
       if (_category && !payload.category_id) {
         try { payload.category_id = await categoryId(_category); } catch { left.push(row); continue; }
       }
       const { error } = await sb.from("transactions").insert(payload);
-      if (error) left.push(row);
+      if (error) { left.push(row); if (/closed month/i.test(error.message)) locked += 1; }
     }
     store.set("ft.queue", left);
+    if (locked) toast(`${locked} offline entr${locked === 1 ? "y is" : "ies are"} dated in a closed month and can't sync until an owner reopens it.`);
     if (left.length < pending.length) toast(`${pending.length - left.length} offline entr${pending.length - left.length === 1 ? "y" : "ies"} synced`);
   }
 
@@ -174,6 +187,33 @@
   const accountName = (id) => S.accounts.find((a) => a.id === id)?.name || "Unassigned";
   const categoryName = (id) => S.categories.find((c) => c.id === id)?.name || "Other";
   const activeAccounts = () => S.accounts.filter((a) => !a.archived);
+  const isOwner = () => S.members.some((m) => m.user_id === S.session?.user?.id && m.role === "owner");
+
+  // ------------------------------------------------------------ ledger months
+  // Months are "YYYY-MM-01" strings, so they sort and compare as text.
+  const monthStart = (d) => d.slice(0, 7) + "-01";
+  const fullDate = (ts) => new Date(ts).toLocaleDateString("id-ID", { day: "numeric", month: "short", year: "numeric" });
+  const monthLabel = (m) => new Date(m + "T00:00:00").toLocaleDateString("id-ID", { month: "long", year: "numeric" });
+  const shiftDay = (d, n) => { const x = new Date(d + "T00:00:00"); x.setDate(x.getDate() + n); return x.toLocaleDateString("en-CA"); };
+  const addMonths = (m, n) => { const x = new Date(m + "T00:00:00"); x.setMonth(x.getMonth() + n); return x.toLocaleDateString("en-CA"); };
+  const closedMonths = () => S.closings.filter((c) => c.status === "closed");
+  const latestClosed = () => closedMonths().map((c) => c.month).sort().pop() || "";
+  // last day of the latest closed month: entries on or before it are locked
+  const lockedThrough = () => (latestClosed() ? shiftDay(addMonths(latestClosed(), 1), -1) : "");
+  const isLocked = (date) => !!lockedThrough() && date <= lockedThrough();
+  const minDate = () => (lockedThrough() ? shiftDay(lockedThrough(), 1) : "");
+
+  // The month an owner should close next, or null when none has ended yet.
+  // The first close may be any finished month; after that they go in order.
+  function nextToClose() {
+    const thisMonth = monthStart(today());
+    if (latestClosed()) {
+      const next = addMonths(latestClosed(), 1);
+      return next < thisMonth ? next : null;
+    }
+    const last = addMonths(thisMonth, -1);
+    return S.txns.some((t) => t.date < thisMonth) ? last : null;
+  }
 
   async function categoryId(name) {
     const hit = S.categories.find((c) => c.name.toLowerCase() === name.toLowerCase());
@@ -311,7 +351,7 @@
     if (!S.session) return viewLogin();
     if (!S.household) return viewOnboard();
     const tab = currentTab();
-    ({ home: viewHome, stats: viewStats, portfolio: viewPortfolio, settings: viewSettings, activity: viewActivity })[tab]();
+    ({ home: viewHome, stats: viewStats, portfolio: viewPortfolio, settings: viewSettings, activity: viewActivity, ledger: viewLedger })[tab]();
   }
 
   // ------------------------------------------------------------ views: auth + onboarding
@@ -389,6 +429,7 @@
     const m = summary("month");
     const email = S.session.user.email || "";
     const accts = accountStack(activeAccounts());
+    const due = S.ledgerReady && isOwner() ? nextToClose() : null;
     const recent = allRows().slice(0, 6).map(txRow).join("") ||
       `<div class="empty">No transactions yet. Tap + to add your first one.</div>`;
     paint("home", `
@@ -414,6 +455,8 @@
           <div class="stat"><span>Expense</span><b class="num down">${compact(m.expense)}</b></div>
           <div class="stat"><span>Invested</span><b class="num">${compact(m.invest)}</b></div>
         </div>
+        ${due ? `<button class="card due-card" data-act="statement" data-id="${due}">
+          <span class="grow"><b>Close ${esc(monthLabel(due))}</b><small>Check the figures and bank balances, then lock the month.</small></span>${icon("lock")}</button>` : ""}
       </div>
       <div class="sheet">
         <div class="row between"><h2>Recent transactions</h2><button class="link" data-go="activity">View all</button></div>
@@ -570,7 +613,7 @@
   function viewSettings() {
     const accts = accountStack(S.accounts);
     const cats = S.categories.map((c) => `<button class="chip" data-act="category" data-id="${c.id}">${esc(c.name)}</button>`).join("");
-    const isOwner = S.members.some((m) => m.user_id === S.session.user.id && m.role === "owner");
+    const owner = isOwner();
     paint("settings", `
       <div class="top">
         <h1 class="title">Settings</h1>
@@ -578,7 +621,7 @@
           <div class="row"><div class="avatar">${esc(initials(S.session.user.email))}</div>
             <div class="grow"><b>${esc(S.session.user.email)}</b><div class="muted" style="font-size:12.5px">${esc(S.household.name)} · ${S.members.length} member${S.members.length === 1 ? "" : "s"}</div></div></div>
           <div class="row">
-            ${isOwner ? `<button class="pill ghost" data-act="member">Add member</button>` : ""}
+            ${owner ? `<button class="pill ghost" data-act="member">Add member</button>` : ""}
             <button class="pill ghost" data-act="signout">Sign out</button>
           </div>
         </div>
@@ -594,9 +637,186 @@
           : "Log entries by chat or by sending a receipt photo"}</small></span>
           <button class="link" data-act="\${S.telegram ? "telegram-unlink" : "telegram-link"}">\${S.telegram ? "Unlink" : "Link Telegram"}</button></div>` : ""}
         <div class="section-label">Data</div>
-        <div class="list-row"><span class="grow">Data source<small>Google Sheets mode arrives in a later phase</small></span><span class="tag">Supabase</span></div>
+        <button class="list-row" data-go="ledger"><span class="grow">Monthly statements<small>${lockedThrough()
+          ? `Closed through ${esc(monthLabel(latestClosed()))}` : "No month closed yet"}</small></span>${icon("next")}</button>
         <div class="list-row"><span class="grow">Waiting to sync<small>Entries saved while offline</small></span><b class="num">${queue().length}</b></div>
       </div>`);
+  }
+
+  // ------------------------------------------------------------ monthly statements (ledger closing)
+  function viewLedger() {
+    const thisMonth = monthStart(today());
+    const next = nextToClose();
+    const lock = lockedThrough();
+    const oldest = S.txns.length ? monthStart(S.txns.reduce((d, t) => (t.date < d ? t.date : d), thisMonth)) : thisMonth;
+    const closed = Object.fromEntries(closedMonths().map((c) => [c.month, c]));
+    const months = [];
+    for (let m = thisMonth; m >= oldest && months.length < 240; m = addMonths(m, -1)) months.push(m);
+    const rows = months.map((m, i) => {
+      const c = closed[m];
+      const status = c ? `Closed on ${fullDate(c.closed_at)}${c.version > 1 ? ` · version ${c.version}` : ""}`
+        : m === thisMonth ? "This month, still running"
+        : lock && m <= lock ? "Locked: before the first closed month"
+        : m === next ? "Ready to close" : "Open";
+      const tag = c ? `<span class="tag ok">Closed</span>` : m === next ? `<span class="tag due">To close</span>` : "";
+      return `<button class="list-row" style="--i:${Math.min(i, 12)}" data-act="statement" data-id="${m}">
+        <span class="grow"><b>${esc(monthLabel(m))}</b><small>${esc(status)}</small></span>
+        ${c ? `<b class="num">${rp(Number(c.closing))}</b>` : ""}${tag}</button>`;
+    }).join("");
+    paint("settings", `
+      <div class="top">
+        <div class="row between">
+          <button class="icon-btn" data-go="settings" aria-label="Back">${icon("back")}</button>
+          <h1 class="title">Monthly statements</h1><span style="width:40px"></span>
+        </div>
+        ${!S.ledgerReady ? `<div class="card"><b>Not set up yet</b><span class="muted" style="font-size:13px">Run <code>supabase/migrations/20261117000000_ledger_closing.sql</code> in the Supabase SQL Editor, then refresh.</span></div>`
+          : next && isOwner() ? `<button class="card due-card" data-act="statement" data-id="${next}">
+            <span class="grow"><b>Close ${esc(monthLabel(next))}</b><small>Check the figures and bank balances, then lock the month.</small></span>${icon("lock")}</button>` : ""}
+      </div>
+      <div class="sheet">
+        <p class="hint" style="margin:0 0 4px">Closing a month saves its statement and locks every entry dated in it or earlier. Only an owner can close or reopen a month.</p>
+        ${S.ledgerReady ? rows : ""}
+      </div>`);
+  }
+
+  let lastStatement = null; // { m, st } of the statement on screen, for the CSV export
+
+  async function sheetStatement(m) {
+    if (!S.ledgerReady) return toast("Monthly statements are not set up yet");
+    const c = closedMonths().find((x) => x.month === m);
+    openSheet(monthLabel(m), `<div class="statement" id="statement" data-month="${m}">
+      <div class="scan-busy"><span class="spinner"></span> Loading the statement…</div></div>`);
+    try {
+      const evq = sb.from("ledger_closing_events").select("*").eq("household_id", S.household.id).eq("month", m).order("at", { ascending: false });
+      let st;
+      if (c) {
+        const [full, accs] = await Promise.all([
+          sb.from("ledger_closings").select("*").eq("id", c.id).single(),
+          sb.from("ledger_closing_accounts").select("*").eq("closing_id", c.id).order("sort_order"),
+        ]);
+        const snap = check(full);
+        st = {
+          closing: snap, totals: snap, savings_rate: snap.savings_rate, realized_pl: snap.realized_pl,
+          by_category: snap.by_category, checklist: snap.checklist,
+          accounts: check(accs).map((a) => ({ ...a, name: a.account_name })),
+        };
+      } else {
+        st = check(await sb.rpc("period_statement", { p_household: S.household.id, p_month: m }));
+      }
+      const events = (await evq).data || [];
+      const box = $("#statement");
+      if (!box || box.dataset.month !== m) return; // closed or replaced while loading
+      lastStatement = { m, st };
+      box.innerHTML = statementBody(m, st, events);
+    } catch (e) {
+      const box = $("#statement");
+      if (box) box.innerHTML = `<div class="error">${esc(isNetworkError(e) ? "Statements need a connection." : e.message || "Could not load the statement.")}</div>`;
+    }
+  }
+
+  function statementBody(m, st, events) {
+    const n = (v) => Number(v) || 0;
+    const T = st.totals, closed = !!st.closing, label = monthLabel(m);
+    const net = n(T.income) - n(T.expense) - n(T.invest);
+    const cell = (name, value, cls = "") => `<div><span>${name}</span><b class="num ${cls}">${value}</b></div>`;
+    const tone = (v) => (v < 0 ? "neg" : "pos");
+    const head = closed
+      ? `<p class="hint">Closed on ${esc(fullDate(st.closing.closed_at))}${st.closing.version > 1 ? ` (version ${st.closing.version})` : ""}. These are the figures saved at closing.${st.closing.note ? ` Note: ${esc(st.closing.note)}` : ""}</p>`
+      : `<p class="hint">Draft. The figures follow your entries until the month is closed.</p>`;
+    const summary = `<div class="st-grid">
+      ${cell("Opening balance", rp(n(T.opening)))}${cell("Closing balance", rp(n(T.closing)))}
+      ${cell("Income", rp(n(T.income)), "pos")}${cell("Expense", rp(-n(T.expense)), "neg")}
+      ${cell("Invested", rp(n(T.invest)))}${cell("Net", rp(net), tone(net))}
+      ${cell("Savings rate", st.savings_rate == null ? "n/a" : `${n(st.savings_rate).toLocaleString("id-ID")}%`)}
+      ${cell("Realized P&amp;L", rp(n(st.realized_pl)), tone(n(st.realized_pl)))}
+      ${closed && st.closing.portfolio_value != null ? cell("Portfolio at closing", rp(n(st.closing.portfolio_value)))
+        + cell("Unrealized P&amp;L", st.closing.unrealized_pl == null ? "at cost" : rp(n(st.closing.unrealized_pl)), tone(n(st.closing.unrealized_pl))) : ""}
+    </div>`;
+    const accounts = st.accounts.map((a) => {
+      const inflow = n(a.income) + n(a.transfer_in), out = n(a.expense) + n(a.invest) + n(a.transfer_out);
+      const bank = closed && a.bank_balance != null
+        ? `<small>Bank ${rp(n(a.bank_balance))}${n(a.difference) ? ` · differs by ${rp(n(a.difference))}${a.difference_note ? `: ${esc(a.difference_note)}` : ""}` : " · matches"}</small>` : "";
+      return `<div class="list-row"><span class="grow">${esc(a.name)}<small>Opening ${rp(n(a.opening))} · in ${compact(inflow)} · out ${compact(out)}</small>${bank}</span>
+        <b class="num">${rp(n(a.closing))}</b></div>`;
+    }).join("") || `<div class="empty">No accounts.</div>`;
+    const cats = (st.by_category || []).map((c) =>
+      `<div class="list-row"><span class="grow">${esc(c.name)}</span><b class="num">${rp(n(c.amount))}</b></div>`).join("")
+      || `<div class="empty">No expenses this month.</div>`;
+    const ck = st.checklist || {};
+    const waiting = queue().filter((q) => monthStart(q.date) === m).length;
+    const checkRow = (ok, text) => `<div class="check ${ok ? "ok" : "warn"}">${ok ? "✓" : "!"} ${text}</div>`;
+    const checklist = `<div class="section-label">Checklist${closed ? " at closing" : ""}</div>
+      ${checkRow(true, `${n(ck.entries)} entr${n(ck.entries) === 1 ? "y" : "ies"} this month`)}
+      ${checkRow(!n(ck.uncategorised), `${n(ck.uncategorised)} without a category`)}
+      ${checkRow(!n(ck.unassigned), `${n(ck.unassigned)} without an account`)}
+      ${closed ? "" : checkRow(!waiting, `${waiting} waiting to sync on this device`)}`;
+
+    let action = "";
+    if (!closed && st.can_close) {
+      const active = st.accounts.filter((a) => a.account_id && !a.archived);
+      action = `<form data-form="close">
+        <input type="hidden" name="month" value="${m}">
+        <div class="section-label">Bank balances on the last day</div>
+        <p class="hint">Enter what each bank app shows at the end of ${esc(label)}. If it differs from the books, fix the entries or say why.</p>
+        ${active.map((a) => `<div class="bank-row">
+          <label class="f">${esc(a.name)} (Rp)<input inputmode="numeric" name="bank-${a.account_id}" data-bank data-id="${a.account_id}"
+            data-name="${esc(a.name)}" data-closing="${n(a.closing)}" value="${num(n(a.closing))}" required></label>
+          <small class="diff" id="diff-${a.account_id}">Matches the books</small>
+          <input id="diffnote-${a.account_id}" placeholder="Why it differs (e.g. bank fee not recorded)" hidden>
+        </div>`).join("")}
+        <label class="f">Note (optional)<input name="note" placeholder="Anything worth remembering about this month"></label>
+        <div class="error"></div>
+        <button class="pill" type="submit">Close ${esc(label)}</button>
+        <p class="hint">After closing, entries dated in ${esc(label)} or earlier can't be added, changed or deleted until an owner reopens it.</p>
+      </form>`;
+    } else if (!closed) {
+      action = `<p class="hint">${esc(st.blocked_reason || "")}</p>`;
+    } else {
+      const canReopen = isOwner() && m === latestClosed();
+      action = `<div class="row no-print">
+          <button class="pill ghost-light" type="button" data-act="statement-print">Print or save PDF</button>
+          <button class="pill ghost-light" type="button" data-act="statement-csv" data-id="${m}">Export CSV</button>
+        </div>
+        ${canReopen ? `<form data-form="reopen">
+          <input type="hidden" name="month" value="${m}">
+          <label class="f">Reason for reopening<input name="reason" required placeholder="e.g. late receipt from the 30th"></label>
+          <div class="error"></div>
+          <button class="pill dark" type="submit">Reopen ${esc(label)}</button>
+        </form>` : ""}`;
+    }
+
+    const history = events.length ? `<div class="section-label">History</div>${events.map((e) =>
+      `<div class="list-row"><span class="grow">${e.action === "close" ? `Closed (version ${e.version})` : "Reopened"}${e.reason ? `<small>${esc(e.reason)}</small>` : ""}</span>
+        <small>${esc(new Date(e.at).toLocaleString("id-ID", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }))}</small></div>`).join("")}` : "";
+
+    return `${head}${summary}
+      <div class="section-label">Accounts</div>${accounts}
+      <div class="section-label">Expenses by category</div>${cats}
+      ${checklist}${action}${history}`;
+  }
+
+  function downloadCsv(m) {
+    if (lastStatement?.m !== m) return;
+    const st = lastStatement.st, T = st.totals;
+    const q = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
+    const lines = [
+      ["Statement", monthLabel(m)], [],
+      ["Account", "Opening", "Income", "Expense", "Invest", "Transfer in", "Transfer out", "Closing", "Bank balance", "Difference", "Note"],
+      ...st.accounts.map((a) => [a.name, a.opening, a.income, a.expense, a.invest, a.transfer_in, a.transfer_out, a.closing,
+        a.bank_balance ?? "", a.difference ?? "", a.difference_note ?? ""]),
+      ["Total", T.opening, T.income, T.expense, T.invest, T.transfer_in, T.transfer_out, T.closing], [],
+      ["Date", "Type", "Category", "Description", "Account", "Amount"],
+      ...S.txns.filter((t) => monthStart(t.date) === m).slice().reverse().map((t) =>
+        [t.date, t.type, t.type.startsWith("transfer") ? "Transfer" : categoryName(t.category_id), t.description, accountName(t.account_id), t.amount]),
+    ];
+    const blob = new Blob(["﻿" + lines.map((r) => r.map(q).join(",")).join("\r\n")], { type: "text/csv" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `statement-${m.slice(0, 7)}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
   }
 
   // ------------------------------------------------------------ bottom-sheet forms
@@ -654,7 +874,8 @@
         <label class="f">Account<select id="txn-account" name="account">${accountOptions(account, editing)}</select></label>
       </div>
       <datalist id="cat-list">${S.categories.map((c) => `<option value="${esc(c.name)}">`).join("")}</datalist>
-      <label class="f">Date<input id="txn-date" name="date" type="date" value="${date}" max="${editing && date > today() ? date : today()}" required></label>
+      <label class="f">Date<input id="txn-date" name="date" type="date" value="${date}" min="${minDate()}" max="${editing && date > today() ? date : today()}" required></label>
+      ${minDate() && date < minDate() ? `<p class="hint">${esc(monthLabel(monthStart(date)))} is closed. Pick a date from ${esc(dateLabel(minDate()))}, or ask an owner to reopen the month.</p>` : ""}
       <div class="error"></div>
       <button class="pill" type="submit">${editing ? "Save changes" : "Save"}</button>
       ${many ? `<button class="pill ghost" type="button" data-act="scan-skip">Skip this row</button>` : ""}
@@ -844,7 +1065,7 @@
       </div>
       <label class="f">Amount (Rp)<input id="tr-amount" name="amount" inputmode="numeric" required placeholder="0" data-money></label>
       <label class="f">Note<input id="tr-note" name="note" placeholder="Optional"></label>
-      <label class="f">Date<input id="tr-date" name="date" type="date" value="${today()}" max="${today()}" required></label>
+      <label class="f">Date<input id="tr-date" name="date" type="date" value="${today()}" min="${minDate()}" max="${today()}" required></label>
       <div class="error"></div>
       <button class="pill" type="submit">Transfer</button>
     </form>`);
@@ -864,8 +1085,10 @@
         <div class="list-row"><span class="grow">Added from</span><span>${esc(t.source)}</span></div>
       </div>
       <div class="error"></div>
-      ${transfer ? "" : `<button class="pill" data-act="tx-edit" data-id="${t.id}">Edit</button>`}
-      <button class="pill danger" data-act="tx-delete" data-id="${t.id}">${transfer ? "Delete both sides of this transfer" : "Delete transaction"}</button>`);
+      ${isLocked(t.date)
+        ? `<p class="hint">${icon("lock")} The books are closed through ${esc(monthLabel(latestClosed()))}, so this entry is locked. An owner can reopen the month in Settings → Monthly statements.</p>`
+        : `${transfer ? "" : `<button class="pill" data-act="tx-edit" data-id="${t.id}">Edit</button>`}
+      <button class="pill danger" data-act="tx-delete" data-id="${t.id}">${transfer ? "Delete both sides of this transfer" : "Delete transaction"}</button>`}`);
   }
 
   function sheetAccount(id) {
@@ -950,7 +1173,7 @@
       </div>
       <div class="two">
         <label class="f">Proceeds go to<select id="sell-account" name="account">${accountOptions("", true)}</select></label>
-        <label class="f">Date<input id="sell-date" name="date" type="date" value="${today()}" max="${today()}" required></label>
+        <label class="f">Date<input id="sell-date" name="date" type="date" value="${today()}" min="${minDate()}" max="${today()}" required></label>
       </div>
       <div class="error"></div>
       <button class="pill" type="submit">Sell</button>
@@ -1066,6 +1289,44 @@
       await reload("Holding added");
     },
 
+    async close(fd, form) {
+      const m = fd.get("month");
+      const bank = {}, notes = {};
+      for (const el of form.querySelectorAll("[data-bank]")) {
+        const closing = Number(el.dataset.closing);
+        const v = parseSigned(el.value);
+        const note = $(`#diffnote-${el.dataset.id}`, form).value.trim();
+        const same = Math.round(v) === Math.round(closing);
+        if (!el.value.trim()) throw new Error(`Enter the bank balance for ${el.dataset.name}.`);
+        if (!same && !note) throw new Error(`Say why ${el.dataset.name} differs from the books, or fix the entries first.`);
+        bank[el.dataset.id] = same ? closing : v; // rounding in the field must not count as a difference
+        if (note && !same) notes[el.dataset.id] = note;
+      }
+      const btn = $("button[type=submit]", form);
+      if (form.dataset.armed !== "1") { // closing locks the month: ask for a second tap
+        form.dataset.armed = "1";
+        btn.textContent = `Tap again to close ${monthLabel(m)}`;
+        return;
+      }
+      const ps = positions();
+      const priced = ps.some((p) => p.value !== null);
+      check(await sb.rpc("close_period", {
+        p_household: S.household.id, p_month: m, p_bank: bank, p_notes: notes, p_note: fd.get("note").trim(),
+        p_portfolio_value: ps.length ? ps.reduce((s, p) => s + (p.value ?? p.cost), 0) : null,
+        p_unrealized: ps.length && priced ? ps.reduce((s, p) => s + (p.pl ?? 0), 0) : null,
+      }));
+      closeSheet();
+      await reload(`${monthLabel(m)} closed`);
+    },
+
+    async reopen(fd) {
+      const m = fd.get("month"), reason = fd.get("reason").trim();
+      if (!reason) throw new Error("Say why the month is being reopened.");
+      check(await sb.rpc("reopen_period", { p_household: S.household.id, p_month: m, p_reason: reason }));
+      closeSheet();
+      await reload(`${monthLabel(m)} reopened`);
+    },
+
     async sell(fd) {
       const qty = parseQty(fd.get("qty")), price = parseAmount(fd.get("price"));
       if (qty <= 0 || price <= 0) throw new Error("Quantity and price must be above zero.");
@@ -1115,6 +1376,9 @@
     close: closeSheet,
     reload: () => reload("Up to date"),
     tx: (el) => openFrom(el, () => sheetTx(el.dataset.id)),
+    statement: (el) => openFrom(el, () => sheetStatement(el.dataset.id)),
+    "statement-print": () => window.print(),
+    "statement-csv": (el) => downloadCsv(el.dataset.id),
     "tx-edit": (el) => {
       const t = S.txns.find((x) => x.id === el.dataset.id);
       if (!t) return;
@@ -1242,6 +1506,18 @@
     const el = ev.target;
     if (el.matches("[data-money]")) { const n = parseAmount(el.value); el.value = n ? num(n) : ""; }
     if (el.dataset.filter) { S.filter[el.dataset.filter] = el.value; renderTxList(); }
+    if (el.matches("[data-bank]")) { // closing: show how far the bank balance is from the books
+      if (/^\s*[-−]\s*$/.test(el.value)) return; // a minus sign on its own: wait for digits
+      const v = parseSigned(el.value);
+      el.value = el.value.trim() ? (v < 0 ? "-" : "") + num(Math.abs(v)) : "";
+      const diff = Math.round(v) - Math.round(Number(el.dataset.closing));
+      const out = $(`#diff-${el.dataset.id}`), note = $(`#diffnote-${el.dataset.id}`);
+      out.textContent = diff ? `Differs from the books by ${rp(diff)}` : "Matches the books";
+      out.classList.toggle("neg", !!diff);
+      note.hidden = !diff;
+      const form = el.closest("form"); // any change cancels a half-done "tap again"
+      if (form?.dataset.armed) { delete form.dataset.armed; $("button[type=submit]", form).textContent = `Close ${monthLabel(form.month.value)}`; }
+    }
   });
 
   document.addEventListener("change", (ev) => {
@@ -1252,7 +1528,7 @@
     runScan(file);
   });
 
-  const TAB_ORDER = { home: 0, activity: 0.5, stats: 1, portfolio: 2, settings: 3 };
+  const TAB_ORDER = { home: 0, activity: 0.5, stats: 1, portfolio: 2, settings: 3, ledger: 3.5 };
   let lastTab = currentTab();
   window.addEventListener("hashchange", () => {
     const tab = currentTab();

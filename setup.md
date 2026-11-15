@@ -338,6 +338,17 @@ Without these, on-device scanning still works and "Try smart read" reports that 
 
 ---
 
+## V2.4 - monthly ledger closing
+
+Closing a month saves its statement and locks every entry dated in it or earlier. Only an owner closes or reopens a month, and only by hand.
+
+1. In the Supabase dashboard, open **SQL Editor**, paste the contents of `supabase/migrations/20261117000000_ledger_closing.sql`, and run it once. Until then, Settings → Monthly statements says "Not set up yet" and nothing is locked.
+2. Reload the app. When a month has ended, owners see a **Close <month>** card on Home.
+3. To close: open the month, check the figures and the checklist, enter each account's bank balance on the last day (explain any difference, or fix the entries first), then tap **Close** twice.
+4. The first close can be any finished month; everything before it is locked with it. After that, months close in order.
+5. To fix a closed month: open it, give a reason and tap **Reopen**. Only the latest closed month can be reopened. Closing it again saves a new version; the old one stays in the history.
+6. A closed statement can be printed (or saved as PDF from the print dialog) and exported as CSV.
+
 ## V2 phase 4 - the Telegram bot on Supabase (shelved)
 
 > Not in use. Scanning in the app covers the same need, so this is parked: the code is in the repo but nothing is deployed, and the "Telegram bot" row in Settings is hidden unless `TELEGRAM_BOT: true` is added to `pwa/config.js`. The steps below are kept in case it is wanted later.

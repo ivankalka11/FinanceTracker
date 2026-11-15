@@ -212,6 +212,36 @@ form { display: flex; flex-direction: column; gap: 12px; }
 }
 #toast.show { opacity: 1; }
 
+/* ---------- monthly statements ---------- */
+.statement { display: flex; flex-direction: column; gap: 8px; }
+.st-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.st-grid > div { background: var(--wash); border-radius: 14px; padding: 10px 12px; min-width: 0; }
+.st-grid span { display: block; font-size: 11.5px; color: var(--ink-muted); }
+.st-grid b { display: block; font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.check { font-size: 13.5px; padding: 3px 0; color: var(--ink); }
+.check.warn { color: var(--red); font-weight: 600; }
+.bank-row { display: flex; flex-direction: column; gap: 6px; }
+.diff { font-size: 12px; color: var(--ink-muted); }
+.diff.neg { color: var(--red); font-weight: 600; }
+.tag.ok { background: #e3f3ea; color: var(--green); }
+.tag.due { background: #fde6da; color: var(--red); }
+.due-card { flex-direction: row; align-items: center; gap: 12px; text-align: left; border-color: var(--orange); color: var(--fg); }
+.due-card b { display: block; font-size: 14.5px; }
+.due-card small { display: block; color: var(--muted); font-size: 12px; margin-top: 2px; }
+.due-card svg.i { color: var(--orange); flex: none; }
+.hint svg.i { width: 15px; height: 15px; vertical-align: -2px; }
+.list-row svg.i { color: var(--ink-muted); flex: none; }
+.pill.ghost-light { background: var(--wash); color: var(--ink); }
+.pill.ghost-light:active { background: var(--rule); }
+
+@media print {
+  body { background: #fff; color: #000; }
+  #app, #toast { display: none !important; }
+  .overlay { position: static; background: none; display: block; animation: none; }
+  .modal { max-width: none; max-height: none; overflow: visible; border-radius: 0; padding: 0; animation: none; }
+  .modal .close, .no-print, .modal form { display: none !important; }
+}
+
 /* ---------- motion ----------
    Nothing just appears: sheets grow out of the row or card you tapped and shrink back
    into it, tabs slide the way you move, the nav highlight glides, rows rise in.

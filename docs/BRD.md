@@ -190,11 +190,8 @@ Priority: **M** = must have, **S** = should have, **C** = could have.
 | V2.1 | Supabase schema, row-level security, RPCs, Sheet import. | Done |
 | V2.2 | Phone-first PWA with offline queue, hosted on Cloudflare Pages. | Done |
 | V2.3 | In-app scanning: on-device PaddleOCR by default, optional Gemini function. | Done |
-| V2.4 | Telegram bot as a Supabase webhook function. | Built, shelved (not deployed) |
-| V2.5 | Sheets mode and nightly mirror. | Planned |
-| V2.6 | Monthly ledger closing (draft statement, manual close by the owner, lock, reopen, history). | Planned |
-| V2.7 | Plans module with progress and notifications. | Planned |
-| Hosting | 24/7 bot hosting (Fly.io Singapore is the leading option); V1 dashboard on GitHub Pages. | Planned |
+| V2.4 | Monthly ledger closing (draft statement, manual close by the owner, lock, reopen, history). | In progress |
+| V2.5 | Plans module with progress and notifications. | Planned |
 
 ## 14. Approval
 

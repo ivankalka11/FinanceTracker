@@ -235,25 +235,25 @@ Priority: **M** must, **S** should, **C** could. "Version" says where the requir
 | FR-MIG-03 | A household's `data_source` can be `supabase` (default) or `sheets`. | S | V2 | BR-12 |
 | FR-MIG-04 | A nightly job mirrors Supabase data to the Google Sheet. | S | Planned | BR-12 |
 
-### 3.12 Monthly ledger closing (planned, V2)
+### 3.12 Monthly ledger closing (V2.4, built)
 
 A *period* is one calendar month in Asia/Jakarta time. A period is **open** until the owner closes it; the system never closes it automatically (BR-21).
 
 | ID | Requirement | Pri | Version | Trace |
 | --- | --- | --- | --- | --- |
-| FR-CLS-01 | For any period the app shows a draft closing statement computed live from the data: per account the opening balance, income, expense, invest, transfer-in, transfer-out and closing balance; household totals; savings rate; expenses by category; realized P&L of sales in the period; portfolio market value and unrealized P&L at the time of viewing. | M | Planned | BR-20 |
-| FR-CLS-02 | Only an `owner` can close a period. Closing is a deliberate action: the owner opens the statement, completes the checklist and confirms "Close month". | M | Planned | BR-21 |
-| FR-CLS-03 | A period can be closed only after it has ended (on or after the 1st of the next month, WIB), and only if every earlier period is closed. | M | Planned | BR-21, BR-25 |
-| FR-CLS-04 | The closing checklist shows, with links to fix each item: transactions in the period with no category; with no account; entries waiting in the offline queue on this device. Items are warnings; the owner may close with them, and the count is saved with the statement. | M | Planned | BR-22 |
-| FR-CLS-05 | For each account the owner enters the actual bank balance at month end. The app shows the difference against the recorded closing balance. A non-zero difference must be either fixed (add an adjusting entry, category "Adjustment") or accepted with a note before closing. | M | Planned | BR-22 |
-| FR-CLS-06 | Closing (`close_period(p_household, p_month)` RPC) runs in one transaction: it recomputes the figures, stores them as an immutable snapshot in `ledger_closings` and `ledger_closing_accounts`, and marks the period `closed` with who closed it and when. | M | Planned | BR-23 |
-| FR-CLS-07 | While a period is closed, the database refuses inserts, updates and deletes of `transactions` and `sales` whose `date` falls in it, and of transfers or sales that would write a leg into it. The check is a database trigger, so it applies to every client (PWA, bot, import). The error message names the closed month. | M | Planned | BR-23 |
-| FR-CLS-08 | The opening balance of a period equals the closing balance of the previous closed period for each account; for the first period it is the account's `opening_balance`. | M | Planned | BR-25 |
-| FR-CLS-09 | An owner can reopen the most recent closed period (`reopen_period`), giving a reason. The reopen is logged in `ledger_closing_events` (who, when, reason). The old snapshot is kept as a previous version; closing again creates a new version. Reopening an earlier period requires reopening the later ones first. | S | Planned | BR-24 |
-| FR-CLS-10 | A "Statements" list shows every period with status (open, closed, reopened), closed-by and closed-at. Opening a closed one shows its stored snapshot, not live figures. | S | Planned | BR-26 |
-| FR-CLS-11 | A closed statement can be printed or saved as PDF (print stylesheet) and exported as CSV (summary and transactions). | S | Planned | BR-26 |
+| FR-CLS-01 | For any period the app shows a draft closing statement computed live from the data: per account the opening balance, income, expense, invest, transfer-in, transfer-out and closing balance; household totals; savings rate; expenses by category; realized P&L of sales in the period; portfolio market value and unrealized P&L at the time of viewing. | M | V2 | BR-20 |
+| FR-CLS-02 | Only an `owner` can close a period. Closing is a deliberate action: the owner opens the statement, completes the checklist and confirms "Close month". | M | V2 | BR-21 |
+| FR-CLS-03 | A period can be closed only after it has ended (on or after the 1st of the next month, WIB), and only in order: the first close may be any finished month (everything before it becomes the opening balance and is locked with it); after that, only the month right after the latest closed one. | M | V2 | BR-21, BR-25 |
+| FR-CLS-04 | The closing checklist shows the number of entries in the period and flags transactions in the period with no category; with no account; entries waiting in the offline queue on this device. Items are warnings; the owner may close with them, and the count is saved with the statement. | M | V2 | BR-22 |
+| FR-CLS-05 | For each account the owner enters the actual bank balance at month end. The app shows the difference against the recorded closing balance. A non-zero difference must be either fixed (add an adjusting entry, category "Adjustment") or accepted with a note before closing. | M | V2 | BR-22 |
+| FR-CLS-06 | Closing (`close_period(p_household, p_month)` RPC) runs in one transaction: it recomputes the figures, stores them as an immutable snapshot in `ledger_closings` and `ledger_closing_accounts`, and marks the period `closed` with who closed it and when. | M | V2 | BR-23 |
+| FR-CLS-07 | While a period is closed, the database refuses inserts, updates and deletes of `transactions` and `sales` whose `date` falls in it, and of transfers or sales that would write a leg into it. The check is a database trigger, so it applies to every client (PWA, bot, import). The error message names the closed month. | M | V2 | BR-23 |
+| FR-CLS-08 | The opening balance of a period equals the closing balance of the previous closed period for each account; for the first period it is the account's `opening_balance`. | M | V2 | BR-25 |
+| FR-CLS-09 | An owner can reopen the most recent closed period (`reopen_period`), giving a reason. The reopen is logged in `ledger_closing_events` (who, when, reason). The old snapshot is kept as a previous version; closing again creates a new version. Reopening an earlier period requires reopening the later ones first. | S | V2 | BR-24 |
+| FR-CLS-10 | A "Statements" list shows every period with status (running, ready to close, open, closed, locked before the first close) and the closing date and version; a closed month also shows its close/reopen history. Opening a closed one shows its stored snapshot, not live figures. | S | V2 | BR-26 |
+| FR-CLS-11 | A closed statement can be printed or saved as PDF (print stylesheet) and exported as CSV (summary and transactions). | S | V2 | BR-26 |
 | FR-CLS-12 | The owner is reminded on the last day of the month at 19:00 WIB, and on days 1, 3 and 7 of the next month while the previous month is still open. Uses the notification channel of section 3.14. | S | Planned | BR-27 |
-| FR-CLS-13 | Investment holdings are not locked by closing; the statement stores their market value and unrealized P&L at the moment of closing. | M | Planned | BR-20 |
+| FR-CLS-13 | Investment holdings are not locked by closing; the statement stores their market value and unrealized P&L at the moment of closing. | M | V2 | BR-20 |
 | FR-CLS-14 | V1 (Sheet) has no closing; the feature is V2 only. | M | Planned | — |
 
 ### 3.13 Plans (planned, V2)
@@ -318,9 +318,9 @@ All calls go to the `/exec` URL with `?action=...` and the shared secret.
 | `prices` | Edge Function | Current gold and stock prices for the household's holdings. |
 | `ocr` | Edge Function | Gemini-based scan of a photo. |
 | `telegram` | Edge Function | Bot webhook (shelved). |
-| `close_period(p_household, p_month, p_bank_balances, p_notes)` | RPC (planned) | Owner-only month close: snapshot and lock. |
-| `reopen_period(p_household, p_month, p_reason)` | RPC (planned) | Owner-only reopen of the latest closed month, logged. |
-| `period_statement(p_household, p_month)` | RPC (planned) | Live draft figures for a month (same maths as the snapshot). |
+| `close_period(p_household, p_month, p_bank, p_notes, p_note, p_portfolio_value, p_unrealized)` | RPC | Owner-only month close: checks bank balances, stores the snapshot, locks the month. |
+| `reopen_period(p_household, p_month, p_reason)` | RPC | Owner-only reopen of the latest closed month, logged. |
+| `period_statement(p_household, p_month)` | RPC | Live draft figures for a month (same maths as the snapshot), plus `can_close` and `blocked_reason`. |
 | `notify` | Edge Function (planned) | Daily job: works out due notifications and sends Web Push / Telegram. |
 
 ## 4. Data requirements
@@ -342,13 +342,13 @@ All calls go to the `/exec` URL with `?action=...` and the shared secret.
 | `telegram_state` | per Telegram user, `state` (JSON) | |
 | `ocr_usage` | `user_id`, `day`, `scans` | |
 
-Planned tables (ledger closing, plans, notifications):
+Ledger tables (built, migration `20261117000000_ledger_closing.sql`) and planned tables (plans, notifications):
 
 | Table | Key columns | Notes |
 | --- | --- | --- |
 | `ledger_closings` | `id`, `household_id`, `month` (first day of month), `version`, `status` (`closed`/`superseded`), totals (income, expense, invest, savings_rate, realized_pl, portfolio_value, unrealized_pl), `by_category` (JSON), `plans` (JSON), `checklist` (JSON), `notes`, `closed_by`, `closed_at` | Unique on `(household_id, month, version)`; rows are never updated except `status`. |
-| `ledger_closing_accounts` | `closing_id`, `account_id`, `account_name`, `opening`, `income`, `expense`, `invest`, `transfer_in`, `transfer_out`, `closing`, `bank_balance`, `difference`, `difference_note` | One row per account per closing. |
-| `ledger_closing_events` | `id`, `household_id`, `month`, `action` (`close`/`reopen`), `reason`, `user_id`, `at` | Audit trail. |
+| `ledger_closing_accounts` | `id`, `closing_id`, `household_id`, `account_id` (null = unassigned entries), `sort_order`, `account_name`, `opening`, `income`, `expense`, `invest`, `transfer_in`, `transfer_out`, `closing`, `bank_balance`, `difference`, `difference_note` | One row per account per closing. |
+| `ledger_closing_events` | `id`, `household_id`, `month`, `version`, `action` (`close`/`reopen`), `reason`, `user_id`, `at` | Audit trail. |
 | `plans` | `id`, `household_id`, `name`, `icon`, `note`, `target_amount > 0`, `start_date`, `target_date`, `account_id`, `status` (`active`/`paused`/`achieved`/`cancelled`), `achieved_at`, `created_by`, `created_at` | |
 | `plan_contributions` | `id`, `household_id`, `plan_id`, `date`, `amount > 0`, `note`, `transaction_id` (unique, nullable), `created_by`, `created_at` | |
 | `notifications` | `id`, `household_id`, `user_id`, `kind`, `subject_id`, `period_key`, `title`, `body`, `link`, `created_at`, `sent_at`, `read_at` | Unique on `(user_id, kind, subject_id, period_key)`. |
@@ -376,6 +376,7 @@ Google Sheet tabs: `Transactions`, `Holdings`, `Realized`. Columns mirror the V2
 ### 5.1 User interfaces
 
 - **V2 PWA:** phone-first, bottom navigation with Home, Activity, Stats, Portfolio and Settings. Forms open as bottom sheets (add, scan, transfer, transaction, account, category, member, holding, position, Telegram). Login and onboarding screens precede the main app.
+- **Monthly statements (V2):** Settings → Monthly statements lists every month with its status (running, ready to close, closed, locked). A month opens as a statement sheet: summary, accounts, expenses by category, checklist, then either the close form (bank balance per account, two-tap confirm) or, when closed, print/PDF, CSV export, reopen with a reason, and the close/reopen history. Owners see a "Close <month>" card on Home when one is due. Locked entries show no Edit or Delete, and date pickers start after the locked month.
 - **V1 dashboard:** single page with forms for transactions, holdings and transfers; account balances; category chart; transaction table.
 - **Telegram bot:** text commands, inline keyboards for account and category choice, review cards for history imports.
 
@@ -482,10 +483,8 @@ Google Sheet tabs: `Transactions`, `Holdings`, `Realized`. Columns mirror the V2
 
 ## 8. Open items
 
-1. Sheets mode and nightly mirror (FR-MIG-03, FR-MIG-04): design not final.
-2. Telegram webhook (FR-BOT-05 to FR-BOT-08): built, not deployed.
-3. 24/7 hosting for the V1 bot: Fly.io Singapore is the leading option.
-4. Receipt photo storage (`receipts` table): reserved, not used.
-5. V1 dashboard hosting on GitHub Pages: workflow exists, not live.
-6. Ledger closing (3.12) and Plans (3.13): specified, not built. Decide whether a plan contribution should also create a transfer automatically when a linked account is set.
-7. Notifications (3.14): needs VAPID keys and `pg_cron` enabled on the Supabase project; the PWA's `_headers` must allow the push service endpoints.
+1. Receipt photo storage (`receipts` table): reserved, not used.
+2. Ledger closing (3.12): first version built (V2.4). Not yet built: reminders (FR-CLS-12, waits for notifications), the plan section of the statement (FR-PLN-11).
+3. Plans (3.13): specified, not built. Decide whether a plan contribution should also create a transfer automatically when a linked account is set.
+4. Notifications (3.14): needs VAPID keys and `pg_cron` enabled on the Supabase project; the PWA's `_headers` must allow the push service endpoints.
+5. Off the roadmap for now: the Telegram webhook (FR-BOT-05 to FR-BOT-08, built but not deployed), Sheets mode and the nightly mirror (FR-MIG-03, FR-MIG-04), and hosting for the V1 bot and dashboard.
