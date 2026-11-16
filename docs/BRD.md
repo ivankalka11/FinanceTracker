@@ -197,7 +197,7 @@ Priority: **M** = must have, **S** = should have, **C** = could have.
 | V2.3 | In-app scanning: on-device PaddleOCR by default, optional Gemini function. | Done |
 | V2.4 | Monthly ledger closing (draft statement, manual close by the owner, lock, reopen, history). | Done |
 | V2.5 | Plans module with progress and notifications (database, plans screens, in-app bell and notification settings). | Done, except Web Push delivery |
-| V2.6 | Plan ledger (add, take out, adjust), gold and stocks inside plans, set-aside and free-to-spend per account, plan section of the statement with prices. | Done (the migration still has to be run on the Supabase project) |
+| V2.6 | Plan ledger (add, take out, adjust), gold and stocks inside plans, set-aside and free-to-spend per account, plan section of the statement with prices. | Done (migration run on the live Supabase project) |
 | Next | Web Push delivery of notifications (VAPID keys, sending function, per-device switch). | Planned |
 
 ## 14. Approval

@@ -15,13 +15,12 @@ Supabase is the default database. The phone-first PWA (`pwa/`) is the main front
 | V2.3 | In-app scanning: on-device PaddleOCR by default, optional Gemini "smart read" | Done |
 | V2.4 | Monthly ledger closing: draft statement, owner closes by hand, lock, reopen, history | Done |
 | V2.5 | Plans, in-app notifications (bell, per-kind switches), `pg_cron` checks at 07:00 and 19:00 WIB | Done, except Web Push |
-| V2.6 | Plan ledger (add, take out, adjust), gold and stocks in plans, set aside and free to spend per account, plan section of the statement | Done; run `20261119000000_plan_ledger.sql` on the Supabase project |
+| V2.6 | Plan ledger (add, take out, adjust), gold and stocks in plans, set aside and free to spend per account, plan section of the statement | Done; migrations run on the live Supabase project |
 
 ## Next
 
 1. **Web Push delivery** of notifications: VAPID keys, an Edge Function that sends rows with `sent_at is null`, a `push` handler in `pwa/sw.js`, a push switch per device, and the iPhone "Add to Home Screen" note. `pwa/_headers` must allow the push service endpoints.
-2. **Run the pending migrations** on the Supabase project: `20261118000000_plans.sql` and `20261119000000_plan_ledger.sql`. Until then the app hides plans or falls back to deposit-only plans.
-3. **Housekeeping on GitHub:** make sure GitHub Pages is turned off in the repository settings (the sample Jekyll workflow was removed).
+2. **Housekeeping on GitHub:** make sure GitHub Pages is turned off in the repository settings (the sample Jekyll workflow was removed).
 
 ## Open decisions
 
