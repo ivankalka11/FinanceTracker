@@ -176,6 +176,7 @@ Priority: **M** must, **S** should, **C** could. "Version" says where the requir
 | FR-PRC-02 | Stocks are priced from Yahoo Finance; `.JK` is appended to the ticker automatically. Prices may be about 15 minutes delayed. | M | V1, V2 | BR-09 |
 | FR-PRC-03 | Prices are fetched only by the bot, Apps Script or the `prices` Edge Function, never from the browser. | M | V1, V2 | C-3 |
 | FR-PRC-04 | `TelegramBot/diagnose.py` checks gold-pricing connectivity. | C | V1 | BR-09 |
+| FR-PRC-05 | A scheduled job (`pg_cron` calling the `price-snapshot` Edge Function through `pg_net`) runs every day at 10:00 WIB. It fetches the Antam buyback (if any gold is held) and the price of every held stock and saves one price per asset per day in `price_snapshots`. The function accepts only calls that carry the shared `CRON_SECRET`; signed-in users can read the table, only the function writes it. | S | V2.8 | BR-09 |
 
 ### 3.7 Reports
 
@@ -253,7 +254,7 @@ A *period* is one calendar month in Asia/Jakarta time. A period is **open** unti
 | FR-CLS-09 | An owner can reopen the most recent closed period (`reopen_period`), giving a reason. The reopen is logged in `ledger_closing_events` (who, when, reason). The old snapshot is kept as a previous version; closing again creates a new version. Reopening an earlier period requires reopening the later ones first. | S | V2 | BR-24 |
 | FR-CLS-10 | A "Statements" list shows every period with status (running, ready to close, open, closed, locked before the first close) and the closing date and version; a closed month also shows its close/reopen history. Opening a closed one shows its stored snapshot, not live figures. | S | V2 | BR-26 |
 | FR-CLS-11 | A closed statement can be printed or saved as PDF (print stylesheet) and exported as CSV (summary and transactions). | S | V2 | BR-26 |
-| FR-CLS-12 | The owner is reminded on the last day of the month at 19:00 WIB, and on days 1, 3 and 7 of the next month while the previous month is still open. Uses the notification channel of section 3.14. | S | V2.5 | BR-27 |
+| FR-CLS-12 | The owner is reminded on the last day of the month from 16:00 WIB (the last scheduled check of the day), and on days 1, 3 and 7 of the next month while the previous month is still open. Uses the notification channel of section 3.14. | S | V2.5 | BR-27 |
 | FR-CLS-13 | Investment holdings are not locked by closing; the statement stores their market value and unrealized P&L at the moment of closing. | M | V2 | BR-20 |
 | FR-CLS-14 | V1 (Sheet) has no closing; the feature is V2 only. | M | V2 | — |
 
@@ -286,7 +287,7 @@ A *period* is one calendar month in Asia/Jakarta time. A period is **open** unti
 
 | ID | Requirement | Pri | Version | Trace |
 | --- | --- | --- | --- | --- |
-| FR-NTF-01 | A scheduled job (Supabase `pg_cron` calling `run_notifications()`) runs every day at 07:00 and 19:00 WIB and works out which plan and closing notifications are due. The app runs the same check for its household when it opens (`check_notifications()`), so nothing depends on the schedule alone. | M | V2.5 | BR-27, BR-32 |
+| FR-NTF-01 | A scheduled job (Supabase `pg_cron` calling `run_notifications()`) runs every day at 08:00, 12:00 and 16:00 WIB and works out which plan and closing notifications are due. The app runs the same check for its household when it opens (`check_notifications()`), so nothing depends on the schedule alone. | M | V2.5 | BR-27, BR-32 |
 | FR-NTF-02 | Each notification is written to a `notifications` table first (user, kind, title, body, link, created_at, read_at), then delivered. A unique key per (user, kind, subject, period) prevents duplicates. | M | V2.5 | BR-32 |
 | FR-NTF-03 | Delivery channels: Web Push to every device the user has subscribed (`push_subscriptions`, VAPID keys held as function secrets); Telegram message when the user's account is linked and the bot is deployed. | M | Planned | BR-33 |
 | FR-NTF-04 | The app shows an in-app notification list (bell icon with unread count) so nothing is lost when push is blocked. | M | V2.5 | BR-33 |
@@ -331,7 +332,7 @@ All calls go to the `/exec` URL with `?action=...` and the shared secret.
 | `reopen_period(p_household, p_month, p_reason)` | RPC | Owner-only reopen of the latest closed month, logged. |
 | `period_statement(p_household, p_month)` | RPC | Live draft figures for a month (same maths as the snapshot), plus `can_close` and `blocked_reason`. |
 | `check_notifications(p_household)` | RPC | Runs the daily plan and month-close checks for the household when the app opens; returns the caller's unread count. |
-| `run_notifications()` | RPC | Called by `pg_cron` at 07:00 and 19:00 WIB for every household; trims old notifications. |
+| `run_notifications()` | RPC | Called by `pg_cron` at 08:00, 12:00 and 16:00 WIB for every household; trims old notifications. |
 | `save_push_subscription(p_endpoint, p_p256dh, p_auth, p_user_agent)` | RPC | Stores this device's Web Push subscription. |
 | `assign_holding_to_plan(p_plan, p_holding, p_quantity, p_price, p_date)` | RPC | Earmark a quantity of a lot for a plan; writes an `asset_in` entry. |
 | `unassign_holding_from_plan(p_plan, p_holding, p_quantity, p_price, p_date)` | RPC | Release a lot (all of it when no quantity is given); writes an `asset_out` entry. |
@@ -368,6 +369,7 @@ Ledger tables (built, migration `20261117000000_ledger_closing.sql`), plan and n
 | `plans` | `id`, `household_id`, `name`, `icon`, `note`, `target_amount > 0`, `start_date`, `target_date`, `account_id`, `status` (`active`/`paused`/`achieved`/`cancelled`), `achieved_at`, `behind_since`, `created_by`, `created_at` | `achieved_at` and `behind_since` are set by the database only. |
 | `plan_ledger` | `id`, `household_id`, `plan_id`, `entry_type` (`deposit`/`withdrawal`/`adjustment`/`asset_in`/`asset_out`), `date`, `amount` (signed), `note`, `transaction_id` (unique, nullable), `holding_id` (null after the lot is gone), `asset_type`, `ticker`, `asset_name`, `quantity`, `unit_price`, `created_by`, `created_at` | Was `plan_contributions` (V2.5). Asset columns are filled only on asset entries. Members can write cash entries only. |
 | `plan_holdings` | `id`, `household_id`, `plan_id`, `holding_id`, `quantity > 0`, `created_by`, `created_at` | Unique on `(plan_id, holding_id)`. The total assigned from a lot never exceeds its quantity. Changed only through the assign, release and sale functions. |
+| `price_snapshots` | `asset_type`, `ticker` (gold = `LM`), `price_date`, `price > 0`, `fetched_at` | One price per asset per day, shared by all households; written only by the `price-snapshot` function. |
 | `month_end_prices` | `household_id`, `month`, `asset_type`, `ticker`, `name`, `price > 0`, `price_date` | Market prices of the month's last trading day, saved before closing; read-only for the app. |
 | `plan_contributions` (view) | the deposit rows of `plan_ledger` | Compatibility view so the pre-V2.6 app keeps working. |
 | `plan_ledger_running` (view) | `plan_ledger` plus `cash_balance` and `value_balance` per plan | Running balances in date order. |

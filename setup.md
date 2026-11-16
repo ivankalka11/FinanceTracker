@@ -35,7 +35,7 @@ cd FinanceTracker
 4. In **Authentication → Users → Add user**, create your own user (your email and a password).
 5. In **Project Settings → API keys**, copy the **Project URL** and the **publishable key**. You need them in the next step.
 
-> Optional, for the daily plan and month-close reminders: turn on **Database → Extensions → pg_cron**, then run the last block of `supabase/migrations/20261118000000_plans.sql` again. Without it, the checks still run whenever someone opens the app.
+> Optional scheduled checks and daily price snapshots: see **Scheduled jobs** below.
 
 ---
 
@@ -127,7 +127,32 @@ Run this from your own computer only; the secret key bypasses all security rules
 
 ---
 
-## 5. Using the app
+## 5. Scheduled jobs (optional)
+
+Two jobs run inside Supabase (times are WIB):
+
+- **08:00, 12:00 and 16:00:** the plan and month-close notification checks. Without this the checks still run whenever someone opens the app.
+- **10:00:** a snapshot of the Antam gold buyback and the price of every stock you hold, saved once a day in the `price_snapshots` table.
+
+One-time setup:
+
+1. In Supabase, open **Database → Extensions** and turn on **pg_cron** and **pg_net**.
+2. In **SQL Editor**, run `supabase/migrations/20261121000000_scheduled_jobs.sql`. (On a new project, turn the extensions on first and then run `setup_all.sql`, which already contains it. On a project that ran `setup_all.sql` before the extensions were on, run this file once more after turning them on.)
+3. From the project folder, with `npx supabase login` and `npx supabase link` done:
+
+```bash
+python scripts/setup_price_cron.py
+```
+
+It creates `CRON_SECRET` in `.env`, stores it and your Emas key as function secrets, and deploys the `price-snapshot` function. It prints no secrets.
+
+4. Open `supabase/.temp/vault_setup.sql` (git-ignored; it holds the secret), paste it into the SQL Editor and run it once.
+
+Check it: **Database → Cron Jobs** lists `finance-notifications` and `finance-price-snapshot`, and after 10:00 `select * from price_snapshots order by fetched_at desc` shows today's prices. The jobs only save prices for assets someone holds.
+
+---
+
+## 6. Using the app
 
 - **Home:** total balance, your accounts, this month's totals, plans, recent transactions, and the notification bell.
 - **Add:** income, expense or invest entries; transfers between accounts (not counted as income or expense). Works offline and syncs when the connection returns.
