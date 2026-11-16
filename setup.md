@@ -29,7 +29,7 @@ This repository is **public** on GitHub, so it must never contain a real secret.
 
 ### GitHub Actions
 
-`.github/workflows/jekyll-gh-pages.yml` is a leftover sample that builds the whole repository with Jekyll and publishes it to GitHub Pages on every push to `main`. It does **not** host the PWA (that is Cloudflare Pages) and it would publish every tracked file, including `docs/` and `setup.md`. Turn GitHub Pages off in the repository settings, or delete the workflow, unless you want that. No workflow uses a secret.
+The repository has no workflows. The old sample Jekyll workflow that published every tracked file to GitHub Pages was removed. If GitHub Pages is still switched on in the repository settings, turn it off.
 
 ---
 

@@ -21,7 +21,7 @@ Supabase is the default database. The phone-first PWA (`pwa/`) is the main front
 
 1. **Web Push delivery** of notifications: VAPID keys, an Edge Function that sends rows with `sent_at is null`, a `push` handler in `pwa/sw.js`, a push switch per device, and the iPhone "Add to Home Screen" note. `pwa/_headers` must allow the push service endpoints.
 2. **Run the pending migrations** on the Supabase project: `20261118000000_plans.sql` and `20261119000000_plan_ledger.sql`. Until then the app hides plans or falls back to deposit-only plans.
-3. **Housekeeping on GitHub:** turn off GitHub Pages or delete `.github/workflows/jekyll-gh-pages.yml` (it publishes every tracked file and does not host the PWA).
+3. **Housekeeping on GitHub:** make sure GitHub Pages is turned off in the repository settings (the sample Jekyll workflow was removed).
 
 ## Open decisions
 

@@ -56,7 +56,7 @@ Dashboard ────┘
 | OCR | Gemini API (`gemini-2.5-flash`, free tier); Anthropic as an optional paid provider via `OCR_PROVIDER` |
 | Gold price | Emas API ID (official Antam buyback) |
 | Stock price | Yahoo Finance (IDX `.JK`) |
-| CI | Leftover sample GitHub Actions Jekyll → GitHub Pages workflow (`.github/workflows/jekyll-gh-pages.yml`); it does not host the PWA (Cloudflare Pages does) and uses no secrets |
+| CI | None (the sample Jekyll workflow was removed); the PWA deploys to Cloudflare Pages with `scripts/deploy_pwa.py` |
 
 ## Key files
 
