@@ -1,4 +1,6 @@
-# FinanceTracker — Setup Guide (V1)
+# FinanceTracker — Setup Guide
+
+V2 (Supabase + the `pwa/` app) is the current system; its steps start at **V2 phase 1** below. Sections before that describe **V1** (Google Sheet, Dashboard, Telegram bot), which is kept and still works.
 
 A self-hosted personal finance system for tracking income, expenses, investments, and balances across three savings accounts (Ivan, Mely, Bersama). Indonesian context: Rupiah formatting, QRIS-friendly, Antam gold buyback pricing.
 
@@ -6,16 +8,28 @@ The whole system is driven by a shared **Google Sheets** backend exposed through
 
 ---
 
-## ⚠️ Before you do anything: rotate your credentials
+## Secrets and GitHub: read this first
 
-The root `.env` (and the generated `Dashboard/config.js`) contain **live secrets** (bot token, API secret, Gemini key, Emas key, deployed Apps Script URL). Treat them as compromised and rotate before sharing or deploying:
+This repository is **public** on GitHub, so it must never contain a real secret. A check of the working tree and the full history found no keys, tokens or passwords; only placeholders in `.env.example` and the docs. Keep it that way:
 
-- **Telegram BOT_TOKEN** — in @BotFather, send `/revoke` then `/token` to get a fresh one.
-- **GEMINI_API_KEY** — delete and regenerate in Google AI Studio.
-- **EMAS_API_KEY** — regenerate in your Emas API ID dashboard.
-- **API_SECRET** — change it in `Code.gs`, then update `API_SECRET` in the root `.env` and re-run `python scripts/build_dashboard_config.py`.
+- **Never committed (git-ignored):** `.env`, `Dashboard/config.js`, `pwa/config.js`, `pwa/models/`, `supabase/.temp/`, `.claude/settings*.json`. Only `.env.example`, with empty values, is tracked.
+- **Safe in the browser:** `SUPABASE_URL` and `SUPABASE_PUBLISHABLE_KEY` (they end up in `pwa/config.js`). Row-level security protects the data, and sign-ups are turned off.
+- **Server-side only, never in `pwa/` or `Dashboard/`:** `SUPABASE_SECRET_KEY`, `BOT_TOKEN`, `GEMINI_API_KEY`, `EMAS_API_KEY`, `ANTHROPIC_API_KEY`, `TELEGRAM_WEBHOOK_SECRET`. Edge Function keys go in with `supabase secrets set`.
+- **V1 only:** `API_SECRET` ships to the browser inside `Dashboard/config.js`; a V1 dashboard is only as private as its URL.
+- **Known history note:** the first commit contains a V1 Apps Script `/exec` URL. It is not a secret on its own (the `API_SECRET` guards it), but if you ever shared this repo widely, redeploy the Apps Script as a new deployment to get a new URL.
+- **Before each push,** run `git ls-files | grep -iE "\.env$|config\.js$"` (it should list nothing) and `git diff --cached` for anything that looks like a key.
 
-Never commit `.env` or `Dashboard/config.js` (both are git-ignored). Note that `API_SECRET` ships to the browser, so anyone who opens the dashboard can read it. For a private/personal dashboard that's an accepted tradeoff; just know the API is only as private as that URL + secret.
+**If a secret is ever committed, rotate it first** (deleting it from history does not undo the exposure):
+
+- **Telegram BOT_TOKEN:** in @BotFather, send `/revoke` then `/token`.
+- **GEMINI_API_KEY:** delete and regenerate in Google AI Studio.
+- **EMAS_API_KEY:** regenerate in your Emas API ID dashboard.
+- **API_SECRET:** change it in `Code.gs`, update the root `.env`, re-run `python scripts/build_dashboard_config.py`.
+- **SUPABASE_SECRET_KEY:** create a new secret key in Supabase **Project Settings -> API keys** and delete the old one.
+
+### GitHub Actions
+
+`.github/workflows/jekyll-gh-pages.yml` is a leftover sample that builds the whole repository with Jekyll and publishes it to GitHub Pages on every push to `main`. It does **not** host the PWA (that is Cloudflare Pages) and it would publish every tracked file, including `docs/` and `setup.md`. Turn GitHub Pages off in the repository settings, or delete the workflow, unless you want that. No workflow uses a secret.
 
 ---
 
@@ -23,22 +37,22 @@ Never commit `.env` or `Dashboard/config.js` (both are git-ignored). Note that `
 
 ```
 FinanceTracker/
-├── Dashboard/
-│   ├── dashboard.html      # UI shell + styles
-│   ├── styles.css
-│   ├── app.js              # all dashboard logic (reads window.FINANCE_CONFIG)
-│   └── config.js           # GENERATED from .env (git-ignored)
-└── TelegramBot/
-    ├── bot.py              # Telegram bot (commands, OCR, portfolio, transfers)
-    ├── pricing.py          # market data: Antam gold buyback + IDX stock quotes
-    ├── diagnose.py         # quick gold-pricing connectivity check
-    ├── requirements.txt    # Python deps
-    ├── runtime.txt         # python-3.12.7 (for PaaS hosting)
-    ├── .python-version     # 3.12.7
-    └── (secrets live in the root .env — DO NOT COMMIT)
+├── pwa/                    # V2 app: index.html, app.js, styles.css, sw.js, receipt-parser.js,
+│                           #   ocr-worker.js, manifest, icons, _headers
+│                           #   config.js and models/ are GENERATED (git-ignored)
+├── supabase/
+│   ├── migrations/         # run in order: init, ocr_usage, telegram, ledger_closing, plans, plan_ledger
+│   └── functions/          # prices, ocr, telegram (shelved), _shared
+├── scripts/                # build_pwa_config, deploy_pwa, fetch_ocr_models, import_sheet_to_supabase, ...
+├── tests/                  # receipt_parser_test.js, sql/ (Docker)
+├── docs/                   # BRD.md, SRS.md
+├── Dashboard/              # V1 dashboard (config.js GENERATED, git-ignored)
+├── TelegramBot/            # V1 bot (bot.py, pricing.py, diagnose.py, ...)
+├── code.gs                 # V1 backend (Apps Script)
+└── .env.example            # copy to .env (git-ignored)
 ```
 
-> Note: the backend lives in a separate **`Code.gs`** file inside the Google Apps Script editor — it isn't part of this folder. You need it deployed for either front-end to work.
+> V1 note: the backend is `code.gs`; paste it into the Google Apps Script editor and deploy it for the V1 front-ends to work.
 
 ---
 
@@ -351,7 +365,7 @@ Closing a month saves its statement and locks every entry dated in it or earlier
 
 ## V2.5 - plans and notifications
 
-Plans are savings goals (target amount and date) that you put money into over time. The database, the Plans screen and the notification bell are done; phone push comes next.
+Plans are savings goals (target amount and date) that you put money into over time. The database, the Plans screen and the notification bell are done; phone push (Web Push) comes next.
 
 **Notifications:** the bell on Home shows how many are unread. Tap it for the list; tapping one marks it read and opens its plan or monthly statement. **Mark all read** and **Clear read** tidy the list. New notifications pop up while the app is open (through Supabase Realtime, which the plans migration turns on for the `notifications` table); otherwise they appear the next time the app opens. **Settings → Configuration → Notifications** has a switch per kind: plan milestones, falling behind, deadlines, the monthly reminder, and (owners only) the month-close reminder.
 
@@ -362,7 +376,19 @@ Plans are savings goals (target amount and date) that you put money into over ti
 3. Notifications are created by the database: milestones (25/50/75/100%) as soon as money is added; "behind", 30 and 7 days to go, overdue, the monthly reminder from the 25th, and the month-close reminders when the daily check runs.
 4. The daily check runs at 07:00 and 19:00 WIB through `pg_cron`. If the run prints "pg_cron is not set up", turn on **Database → Extensions → pg_cron** and run the file's last block again; until then the checks still run whenever the app opens.
 5. Owners get every kind of notification unless they turn it off; other members get only the kinds they turn on. Month-close reminders go to owners only.
-6. A plan that has money in it cannot be deleted, only cancelled. Money added to a plan follows the month lock, like transactions.
+6. A plan that has ledger entries or assigned holdings cannot be deleted, only cancelled. Money added to a plan follows the month lock, like transactions.
+
+## V2.6 - plan ledger, gold and stocks in plans
+
+Plans become real ledgers. A plan is a **set-aside on an account**, not an account, so balances still match the bank.
+
+1. Run the earlier migrations first, then in **SQL Editor** paste `supabase/migrations/20261119000000_plan_ledger.sql` and run it once. Until then the app falls back to deposit-only plans.
+2. What it sets up: the `plan_ledger` table (replaces `plan_contributions`, which stays as a view), `plan_holdings`, `month_end_prices`, the `plan_ledger_running` view, and the functions `assign_holding_to_plan`, `unassign_holding_from_plan`, `account_earmarks` and `set_month_end_prices`.
+3. In a plan you can **Add money**, **Take out** money (never below zero; this records the movement in the plan only and moves no money between accounts) and **Assign gold or stocks** you already hold. Selling a lot releases it from its plans automatically; the sale proceeds are not added to plan cash.
+4. Account cards show **Set aside** and **Free to spend**. Saving an expense or investment that takes an account below its set-aside shows a warning (it does not block).
+5. Holdings count in a plan at the live price when the `prices` function is deployed, otherwise at cost. The database itself only knows cost, so notification checks use cost.
+6. When an owner closes a month, the app first saves today's market prices (`set_month_end_prices`) so the statement's plan section is reproducible. It says whether assets were valued at market price or at cost.
+7. Check the database rules with `sh tests/sql/run.sh` (needs Docker).
 
 ## V2 phase 4 - the Telegram bot on Supabase (shelved)
 
@@ -407,13 +433,13 @@ npx supabase functions deploy prices
 
 ---
 
-## Deployment notes (planned, not yet locked in)
+## Deployment notes
 
-- **Bot:** Fly.io (Singapore region, free tier, Dockerfile-based) is the leading candidate for 24/7 hosting. `runtime.txt` and `.python-version` pin Python 3.12.7 for the build. Railway was flagged as risky (credit exhaustion); AWS Free Tier has a limited credit window.
-- **Dashboard:** GitHub Pages (static hosting). Since `config.js` is git-ignored, the Pages build won't include it; you'd need to generate it in the workflow from a GitHub secret. Remember the secret then becomes public — only host a dashboard you're comfortable being reachable by anyone with the URL.
+- **V2 app:** Cloudflare Pages, uploaded with `python scripts/deploy_pwa.py` (see phase 2). No GitHub push or GitHub Pages is involved. The address is public, but data is only returned to signed-in household members.
+- **V1 bot and dashboard:** hosting is off the roadmap. If you ever host the V1 dashboard on a public site, remember `API_SECRET` is readable there.
 
 ---
 
 ## Known limitation (V1)
 
-Imported/screenshot-parsed transactions all land on **today's date** — `api_add` doesn't yet accept a `date` parameter, so historical dates from `/history` imports aren't persisted. Fix path: add a `date` field to the `add` action in `Code.gs` and pass it through `api_add` in `bot.py`.
+The V1 Telegram bot only receives messages while no Telegram webhook is set (it uses polling). The shelved V2 webhook (phase 4) replaces it if you turn that on.

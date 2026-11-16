@@ -9,7 +9,8 @@ Self-hosted personal finance system for an Indonesian household. One Google Shee
 - Show live profit/loss on gold (Antam buyback) and IDX stocks alongside cash balances.
 - Keep the data self-owned (in the user's own Google Sheet) and the running cost at zero (free tiers only).
 - Fit the Indonesian context: Rupiah formatting, QRIS-style receipts, official Antam pricing.
-- Planned, not done yet: 24/7 bot hosting (Fly.io Singapore is the leading candidate) and the dashboard on GitHub Pages.
+- V2 (Supabase + `pwa/` on Cloudflare Pages) is the current system; V1 hosting (24/7 bot, dashboard on GitHub Pages) is off the roadmap.
+- The GitHub repo is public: it must never hold a real secret (see Working rules).
 
 ## Architecture and flow
 
@@ -55,7 +56,7 @@ Dashboard ────┘
 | OCR | Gemini API (`gemini-2.5-flash`, free tier); Anthropic as an optional paid provider via `OCR_PROVIDER` |
 | Gold price | Emas API ID (official Antam buyback) |
 | Stock price | Yahoo Finance (IDX `.JK`) |
-| CI | GitHub Actions Jekyll → GitHub Pages workflow (`.github/workflows/jekyll-gh-pages.yml`) |
+| CI | Leftover sample GitHub Actions Jekyll → GitHub Pages workflow (`.github/workflows/jekyll-gh-pages.yml`); it does not host the PWA (Cloudflare Pages does) and uses no secrets |
 
 ## Key files
 
@@ -89,7 +90,7 @@ Target: Supabase as the default database (Google Sheet kept as a second source a
 
 ## Working rules
 
-- Never commit `.env` or `Dashboard/config.js`; never print their values.
+- Never commit `.env`, `Dashboard/config.js` or `pwa/config.js`; never print their values. The repo is public; a scan of the tree and history found only placeholders (the first commit holds an old V1 Apps Script URL, not a secret by itself).
 - `API_SECRET` ships to the browser in `config.js`, so the dashboard is only as private as its URL.
 - The account list (`Ivan`, `Mely`, `Bersama`) is hard-coded in `bot.py`; keep it in sync with the dashboard and `code.gs`.
 - Keep `README.md` and `setup.md` in step with behavior changes.

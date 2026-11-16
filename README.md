@@ -1,114 +1,121 @@
 # FinanceTracker
 
-A self-hosted personal finance system built around a shared **Google Sheets** backend, with two front-ends that talk to it through a Google Apps Script web app: a **web dashboard** and a **Telegram bot**. Designed for the Indonesian context — Rupiah formatting, QRIS-friendly receipt capture, and official Antam gold buyback pricing.
+A self-hosted personal finance system for an Indonesian household: Rupiah formatting, receipt capture and official Antam gold buyback pricing. You own the data and the running cost is zero (free tiers only).
 
-Log income, expenses, and investments across multiple savings accounts; snap a photo of a receipt or payslip and let OCR extract the details; track live profit/loss on gold (Antam buyback) and IDX stocks; and move funds between accounts with transfers that stay out of your income/expense totals. Everything reads and writes to one Google Sheet, so your data stays yours.
+**V2 (current)** is a phone-first web app (a PWA) on a **Supabase** database. **V1** is the original Google Sheet + Apps Script backend with a web dashboard and a Telegram bot; it is kept in the repo and still works.
 
 ---
 
-## Features
+## Features (V2 app)
 
-- 📊 **Web dashboard** — full CRUD, expenses-by-category chart, filterable/sortable/paginated tables
-- 🤖 **Telegram bot** — text commands, receipt & payslip OCR (Gemini), live portfolio P&L
-- 💰 **Investments** — weighted-average positions, sell tracking, realized P&L
-- 🏦 **Multi-account** — per-account balances and inter-account transfers
-- 🥇 **Live pricing** — Antam gold buyback + IDX stock quotes, fetched server-side
-- 📷 **OCR import** — receipts → expenses, payslips → net take-home income
+- **Accounts you define**: any number of accounts per household, with opening balances, and transfers between them that stay out of income and expense totals.
+- **Transactions**: income, expense and invest entries, categories, edit and delete, offline queue.
+- **Scan**: photograph a receipt, payslip or a transaction-history screenshot. Text is read on the device (PaddleOCR); an optional Gemini function ("smart read") helps with hard photos. Nothing is saved until you check and tap Save.
+- **Portfolio**: gold (Antam buyback) and IDX stocks, weighted-average cost, live profit and loss, sell tracking and realized P&L.
+- **Monthly closing**: close a month to save its statement and lock its entries; owners can reopen the latest month.
+- **Plans**: savings goals with a target amount and date. A plan is a set-aside on a real account, with its own ledger (add, take out, adjust), and can include gold and stocks you already hold. Each account shows balance, set aside and free to spend.
+- **Notifications**: plan milestones, falling behind, deadlines and month-close reminders, in an in-app bell with per-kind switches. Phone push delivery is not built yet.
+- **Households**: invite members by email; owners and members have different rights.
+
+The V1 dashboard and Telegram bot (Google Sheet backend) are described in [`setup.md`](setup.md). What is built, what is next and what is parked is in [`plan.md`](plan.md).
 
 ---
 
 ## Architecture
 
 ```
-Telegram Bot ─┐
-              ├──► Apps Script Web App (/exec, guarded by a secret) ──► Google Sheet
-Dashboard ────┘
+V2:  Phone / browser (PWA)  ──►  Supabase  (Postgres + row-level security, Auth, Edge Functions)
+                                   ├─ prices function  (Antam gold, Yahoo Finance)
+                                   └─ ocr function     (optional Gemini "smart read")
+
+V1:  Telegram Bot ─┐
+                   ├──► Apps Script Web App (guarded by API_SECRET) ──► Google Sheet
+     Dashboard ────┘
 ```
 
-Both front-ends POST JSON to a single Google Apps Script web app, which is the only thing that reads and writes the spreadsheet. Live price lookups (gold, stocks) happen server-side, never in the browser.
+The PWA talks straight to Supabase with the signed-in user's session. Every table carries a `household_id` and row-level security lets only household members read or write it. Live prices are fetched server-side by an Edge Function, never in the browser.
 
 ---
 
 ## Tech stack
 
-| Part         | Tech                                           |
-| ------------ | ---------------------------------------------- |
-| Backend      | Google Sheets + Google Apps Script (`Code.gs`) |
-| Dashboard    | HTML / CSS / vanilla JS, Chart.js              |
-| Bot          | Python 3.12, pyTelegramBotAPI                  |
-| OCR          | Gemini API (free tier)                         |
-| Gold pricing | Emas API ID (official Antam buyback)           |
-| Stock data   | Yahoo Finance (IDX `.JK`)                      |
+| Part | Tech |
+| --- | --- |
+| Database and auth | Supabase (Postgres, magic-link or password sign-in) |
+| App | HTML, CSS, vanilla JS, Chart.js, no build step (`pwa/`) |
+| Scanning | PaddleOCR on the device (ONNX runtime); optional Gemini function |
+| Prices | Emas API ID (Antam buyback), Yahoo Finance (IDX `.JK`), via a Supabase function |
+| Hosting | Cloudflare Pages (`scripts/deploy_pwa.py`) |
+| V1 (kept) | Google Sheets + Apps Script, Dashboard, Python Telegram bot |
 
 ---
 
-## Quick start
+## Quick start (V2)
 
-> Full instructions, including backend deployment and credential setup, are in [`setup.md`](setup.md).
+> Full steps, including the database, functions, hosting and every migration, are in [`setup.md`](setup.md).
 
-**1. Backend** — Create a Google Sheet, paste `Code.gs` into Apps Script, set a `SECRET`, and deploy as a Web App. Copy the `/exec` URL.
-
-**2. Telegram bot**
+1. Create a free Supabase project and run the files in `supabase/migrations/` in order (SQL Editor).
+2. Copy `.env.example` to `.env` and fill in `SUPABASE_URL` and `SUPABASE_PUBLISHABLE_KEY`.
+3. Run locally:
 
 ```bash
-cd TelegramBot
-python3 -m venv venv && source venv/bin/activate
-python3 -m pip install -r requirements.txt
-# create .env (see below), then:
-python3 bot.py
+python scripts/build_pwa_config.py
+python -m http.server 5173 --directory pwa
 ```
 
-**3. Dashboard** — Run `python scripts/build_dashboard_config.py` to generate `Dashboard/config.js` from the root `.env`, then open `dashboard.html` (or serve the folder with `python3 -m http.server`).
+4. Open `http://localhost:5173` and sign in. To host it: `python scripts/deploy_pwa.py` (Cloudflare Pages).
 
-### `.env` (project root, shared by bot + dashboard)
+To bring over V1 data, run `scripts/import_sheet_to_supabase.py` (safe to re-run).
 
-Copy `.env.example` to `.env` at the project root. The bot loads it automatically; the dashboard gets `APPS_SCRIPT_URL` and `API_SECRET` via the generated `Dashboard/config.js`.
+Run the checks:
 
-```env
-BOT_TOKEN=your_telegram_bot_token
-APPS_SCRIPT_URL=https://script.google.com/macros/s/XXXX/exec
-API_SECRET=your_chosen_secret          # must match SECRET in Code.gs
-ALLOWED_TELEGRAM_ID=                   # optional: lock bot to your user id
-OCR_PROVIDER=gemini
-GEMINI_API_KEY=your_gemini_key
-GEMINI_MODEL=gemini-2.5-flash
-EMAS_API_KEY=your_emas_key
+```bash
+node tests/receipt_parser_test.js
+sh tests/sql/run.sh        # database rules, needs Docker
 ```
 
 ---
 
-## Bot commands
+## Repository layout
+
+```
+pwa/                 V2 app (index.html, app.js, styles.css, sw.js, receipt-parser.js, ocr-worker.js, _headers)
+supabase/migrations/ database schema, security rules and functions, in order
+supabase/functions/  Edge Functions: prices, ocr, and the shelved telegram webhook
+scripts/             config build, Cloudflare deploy, OCR model fetch, Sheet import
+tests/               parser tests and SQL tests
+docs/                BRD.md (business requirements) and SRS.md (software requirements)
+Dashboard/, TelegramBot/, code.gs   V1 (Google Sheet backend)
+```
+
+---
+
+## Security and what is on GitHub
+
+This repository is public. It must never hold a real secret.
+
+- **Git-ignored, never committed:** `.env`, `Dashboard/config.js`, `pwa/config.js`, `pwa/models/`, `supabase/.temp/`, and `.claude/settings*.json`. Only `.env.example` (empty values) is tracked.
+- **Safe in the browser:** `SUPABASE_URL` and `SUPABASE_PUBLISHABLE_KEY`. Row-level security protects the data, and sign-ups are turned off so people join by invite only.
+- **Server-side only:** `SUPABASE_SECRET_KEY` (bypasses security), `BOT_TOKEN`, `GEMINI_API_KEY`, `EMAS_API_KEY`, `ANTHROPIC_API_KEY`, `TELEGRAM_WEBHOOK_SECRET`. Edge Function keys are stored with `supabase secrets set`, not in files.
+- **V1 only:** `API_SECRET` ships to the browser inside `Dashboard/config.js`, so a V1 dashboard is only as private as its URL.
+- If a secret is ever committed, rotate it first (removing it from history does not undo the exposure); see the checklist in [`setup.md`](setup.md).
+
+---
+
+## V1 reference: Telegram bot commands
 
 ```
 /add <type> <amount> <description> [category]   add a transaction (income/expense/invest)
-/payslip                                        next photo → net take-home logged as income
-(send a receipt photo)                          OCR → expense, asks which account
-/history                                        next photo -> expenses from multiple history
-
+/payslip                                        next photo -> net take-home logged as income
+(send a receipt photo)                          OCR -> expense, asks which account
+/history                                        next photo -> expenses from a history screenshot
 /portfolio                                      live P&L on gold + stocks
 /sell <ticker> <qty> <price> <account>          sell a holding, records realized P&L
 /realized                                       realized profit/loss from past sales
-
 /accounts                                       balance per account
 /transfer <from> <to> <amount> [note]           move funds between accounts
 /summary                                        this month's income / expense / balance
 /recent                                         last 5 transactions
 ```
 
----
-
-## Security note
-
-Never commit `.env` or `Dashboard/config.js` (both are git-ignored). The dashboard's `SECRET` ships to the browser inside `config.js`, so anyone with the dashboard URL can read it; only host a dashboard you're comfortable being reachable by anyone who has the link.
-
----
-
-## Transaction dates
-
-The backend's `add` action accepts an optional `date` (`YYYY-MM-DD`) and falls back to today when it's missing. Every entry path sends one when it can:
-
-- **Dashboard form:** the date picker value.
-- **`/history` screenshots:** each parsed row's date.
-- **Receipt / payslip photos:** the date the OCR reads (the receipt date, or the payslip's pay date). The bot shows the date in the confirmation, or "today" if none was found.
-
-The bot discards dates that are malformed or in the future, so those entries fall back to today. Make sure your deployed Apps Script is the current `code.gs`: an older deployment ignores `date` and saves everything as today.
+The V1 `add` action accepts an optional `date` (`YYYY-MM-DD`) and falls back to today; the bot drops malformed or future dates. Redeploy the current `code.gs` after changing it, or an older deployment ignores `date`.

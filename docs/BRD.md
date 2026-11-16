@@ -140,6 +140,11 @@ Priority: **M** = must have, **S** = should have, **C** = could have.
 | BR-32 | The owner is notified when a plan reaches 25%, 50%, 75% and 100%; when it falls behind; when its target date is 30 and 7 days away; and once a month as a reminder to contribute. | M | BO-9 |
 | BR-33 | Notifications reach the owner's phone even when the app is closed (push notification; Telegram once the bot is live). The owner can turn each kind on or off. | S | BO-9 |
 | BR-34 | The closing statement lists each plan's contributions for the month and its progress at month end. | C | BO-8, BO-9 |
+| BR-35 | A plan is a set-aside on a real account, not an account of its own, so account balances keep matching the bank. Each account shows its balance, the amount set aside for plans, and what is free to spend. | M | BO-9, BO-3 |
+| BR-36 | Money can also be taken out of a plan (for example when it is spent) and corrected with an adjustment. Every movement is kept in a ledger for the plan, and a plan's cash can never go below zero. | S | BO-9 |
+| BR-37 | Gold and stocks already held can be assigned to a plan. They count towards its total at the live price (at cost when prices are not available), and can be released again. Selling a holding releases it from any plan. | S | BO-9, BO-3 |
+| BR-38 | The closing statement shows, per plan, the cash at the start and end of the month, money added and taken out, the value of gold and stocks, and whether those were valued at market price or at cost. | C | BO-8, BO-9 |
+| BR-39 | The user is warned when an expense takes an account below the amount set aside for plans. | C | BO-9 |
 
 ## 9. Success criteria
 
@@ -191,7 +196,9 @@ Priority: **M** = must have, **S** = should have, **C** = could have.
 | V2.2 | Phone-first PWA with offline queue, hosted on Cloudflare Pages. | Done |
 | V2.3 | In-app scanning: on-device PaddleOCR by default, optional Gemini function. | Done |
 | V2.4 | Monthly ledger closing (draft statement, manual close by the owner, lock, reopen, history). | Done |
-| V2.5 | Plans module with progress and notifications. | In progress (database done) |
+| V2.5 | Plans module with progress and notifications (database, plans screens, in-app bell and notification settings). | Done, except Web Push delivery |
+| V2.6 | Plan ledger (add, take out, adjust), gold and stocks inside plans, set-aside and free-to-spend per account, plan section of the statement with prices. | Done (the migration still has to be run on the Supabase project) |
+| Next | Web Push delivery of notifications (VAPID keys, sending function, per-device switch). | Planned |
 
 ## 14. Approval
 
