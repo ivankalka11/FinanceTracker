@@ -804,7 +804,7 @@
             <div class="grow"><b>${esc(S.session.user.email)}</b><div class="muted" style="font-size:12.5px">${esc(S.household.name)} · ${S.members.length} member${S.members.length === 1 ? "" : "s"}</div></div></div>
           <div class="row">
             ${owner ? `<button class="pill ghost" data-act="member">Add member</button>` : ""}
-            <button class="pill ghost" data-act="signout">Sign out</button>
+            <button class="pill ghost" data-act="signout-ask">Sign out</button>
           </div>
         </div>
       </div>
@@ -1380,6 +1380,12 @@
       ${a ? `<button class="pill dark" type="button" data-act="account-archive" data-id="${a.id}">${a.archived ? "Restore account" : "Archive account"}</button>
         <p class="hint">Archiving hides the account from forms. Its history stays.</p>` : ""}
     </form>`);
+  }
+
+  function sheetSignOut() {
+    openSheet("Sign out?", `<p class="hint">You will need to sign in again to see your accounts on this device.</p>
+      <button class="pill danger" type="button" data-act="signout">Sign out</button>
+      <button class="pill ghost" type="button" data-act="close">Cancel</button>`);
   }
 
   function sheetCategory(id) {
@@ -1983,6 +1989,7 @@
       card.parentElement.querySelectorAll(".wcard").forEach((c) => c.classList.toggle("open", c === card));
     },
     dismiss: (el, ev) => { if (ev.target === el) closeSheet(); },
+    "signout-ask": () => sheetSignOut(),
 
     "txn-type": (el) => {
       $("#txn-type").value = el.dataset.id;
