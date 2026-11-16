@@ -2043,8 +2043,15 @@
     async signout() {
       if (notifChannel) { sb.removeChannel(notifChannel); notifChannel = null; }
       checkedAt = 0;
-      await sb.auth.signOut();
       localStorage.removeItem("ft.cache");
+      // "local" ends this device's session. If the server cannot be reached, supabase-js keeps
+      // the session and returns an error, which used to leave the button doing nothing.
+      let failed = false;
+      try { failed = !!(await sb.auth.signOut({ scope: "local" })).error; } catch { failed = true; }
+      if (failed) {
+        Object.keys(localStorage).filter((k) => k.startsWith("sb-")).forEach((k) => localStorage.removeItem(k));
+        location.reload();
+      }
     },
 
     async "tx-delete"(el) {
