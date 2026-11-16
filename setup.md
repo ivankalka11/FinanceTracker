@@ -35,7 +35,7 @@ cd FinanceTracker
 4. In **Authentication → Users → Add user**, create your own user (your email and a password).
 5. In **Project Settings → API keys**, copy the **Project URL** and the **publishable key**. You need them in the next step.
 
-> Optional scheduled checks and daily price snapshots: see **Scheduled jobs** below.
+> Optional scheduled notification checks: see **Scheduled checks** below.
 
 ---
 
@@ -127,28 +127,16 @@ Run this from your own computer only; the secret key bypasses all security rules
 
 ---
 
-## 5. Scheduled jobs (optional)
+## 5. Scheduled checks (optional)
 
-Two jobs run inside Supabase (times are WIB):
+Notification checks (plans and month-close reminders) can run inside Supabase at **08:00, 12:00 and 16:00 WIB**. Without this they still run whenever someone opens the app.
 
-- **08:00, 12:00 and 16:00:** the plan and month-close notification checks. Without this the checks still run whenever someone opens the app.
-- **10:00:** a snapshot of the Antam gold buyback and the price of every stock you hold, saved once a day in the `price_snapshots` table.
+1. In Supabase, open **Database → Extensions** and turn on **pg_cron**.
+2. In **SQL Editor**, run `supabase/migrations/20261121000000_scheduled_jobs.sql`. (On a new project, turn the extension on first and then run `setup_all.sql`, which already contains it.)
 
-One-time setup:
+Check it: **Database → Cron Jobs** lists `finance-notifications`.
 
-1. In Supabase, open **Database → Extensions** and turn on **pg_cron** and **pg_net**.
-2. In **SQL Editor**, run `supabase/migrations/20261121000000_scheduled_jobs.sql`. (On a new project, turn the extensions on first and then run `setup_all.sql`, which already contains it. On a project that ran `setup_all.sql` before the extensions were on, run this file once more after turning them on.)
-3. From the project folder, with `npx supabase login` and `npx supabase link` done:
-
-```bash
-python scripts/setup_price_cron.py
-```
-
-It creates `CRON_SECRET` in `.env`, stores it and your Emas key as function secrets, and deploys the `price-snapshot` function. It prints no secrets.
-
-4. Open `supabase/.temp/vault_setup.sql` (git-ignored; it holds the secret), paste it into the SQL Editor and run it once.
-
-Check it: **Database → Cron Jobs** lists `finance-notifications` and `finance-price-snapshot`, and after 10:00 `select * from price_snapshots order by fetched_at desc` shows today's prices. The jobs only save prices for assets someone holds.
+Holding prices are not scheduled. Open the **Portfolio** page and tap **Sync prices** to refresh gold and stocks on demand.
 
 ---
 

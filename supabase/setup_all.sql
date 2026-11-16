@@ -2827,13 +2827,12 @@ $$;
 -- Scheduled jobs (all times WIB; pg_cron runs in UTC).
 --
 --   08:00, 12:00, 16:00  notification checks (public.run_notifications())
---   10:00                stock and gold price snapshot (Edge Function price-snapshot)
 --
 -- The checks that used to run at 07:00 and 19:00 move to the three times above, and the
 -- last-day month-close reminder (FR-CLS-12) now starts at 16:00 instead of 19:00.
--- Everything here needs the pg_cron extension, and the snapshot also needs pg_net
--- and two Vault secrets (see setup.md, "Scheduled jobs"). Without them the jobs are
--- skipped with a notice; the app still runs the notification checks when it opens.
+-- This needs the pg_cron extension. Without it the schedule is skipped with a notice;
+-- the app still runs the notification checks when it opens.
+-- (Holding prices are not scheduled: the Portfolio page has a Sync prices button.)
 --
 -- Needs 20261118000000_plans.sql.
 
@@ -2894,23 +2893,6 @@ begin
 end;
 $$;
 
--- One price per asset per day. Public market data, shared by every household.
-create table public.price_snapshots (
-  asset_type text not null check (asset_type in ('gold', 'stock')),
-  ticker     text not null,              -- gold is "LM" (Antam 1 g buyback), stocks are IDX tickers
-  price_date date not null,              -- Jakarta calendar day
-  price      numeric(18, 2) not null check (price > 0),
-  fetched_at timestamptz not null default now(),
-  primary key (asset_type, ticker, price_date)
-);
-
-alter table public.price_snapshots enable row level security;
-create policy price_snapshots_select on public.price_snapshots
-  for select to authenticated using (true);
-revoke all on public.price_snapshots from anon, authenticated;
-grant select on public.price_snapshots to authenticated;
-grant all on public.price_snapshots to service_role;
-
 -- Notification checks: 01:00, 05:00 and 09:00 UTC = 08:00, 12:00 and 16:00 WIB.
 do $$
 begin
@@ -2920,26 +2902,5 @@ begin
   perform cron.schedule('finance-notifications', '0 1,5,9 * * *', 'select public.run_notifications()');
 exception when others then
   raise notice 'pg_cron is not set up (%). Notification checks are not scheduled.', sqlerrm;
-end;
-$$;
-
--- Price snapshot: 03:00 UTC = 10:00 WIB. Calls the price-snapshot function through pg_net,
--- reading the project URL and the shared secret from Vault when the job runs.
-do $$
-begin
-  create extension if not exists pg_cron with schema pg_catalog;
-  create extension if not exists pg_net;
-  perform cron.unschedule(jobid) from cron.job where jobname = 'finance-price-snapshot';
-  perform cron.schedule('finance-price-snapshot', '0 3 * * *', $job$
-    select net.http_post(
-      url     := (select decrypted_secret from vault.decrypted_secrets where name = 'ft_project_url')
-                 || '/functions/v1/price-snapshot',
-      headers := jsonb_build_object(
-                   'Content-Type', 'application/json',
-                   'x-cron-secret', (select decrypted_secret from vault.decrypted_secrets where name = 'ft_cron_secret')),
-      body    := '{}'::jsonb)
-  $job$);
-exception when others then
-  raise notice 'The price snapshot job is not scheduled (%). Enable pg_cron and pg_net, then run this file again.', sqlerrm;
 end;
 $$;

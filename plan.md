@@ -17,7 +17,7 @@ Supabase is the default database. The phone-first PWA (`pwa/`) is the main front
 | V2.5 | Plans, in-app notifications (bell, per-kind switches), `pg_cron` checks at 08:00, 12:00 and 16:00 WIB | Done, except Web Push |
 | V2.6 | Plan ledger (add, take out, adjust), gold and stocks in plans, set aside and free to spend per account, plan section of the statement | Done; migrations run on the live Supabase project |
 | V2.7 | Sale proceeds go into plan cash; plan assets on the statement valued at the month's last day | Code and tests done; run `20261120000000_plan_sale_and_month_end.sql` on Supabase and redeploy the `prices` function |
-| V2.8 | Scheduled jobs: notification checks at 08:00, 12:00 and 16:00 WIB; stock and gold price snapshot at 10:00 WIB | Code done; run `20261121000000_scheduled_jobs.sql`, then `python scripts/setup_price_cron.py` |
+| V2.8 | Notification checks at 08:00, 12:00 and 16:00 WIB; Sync prices button on the Portfolio page | Code done; run `20261121000000_scheduled_jobs.sql` (needs pg_cron) and redeploy the app |
 
 ## Next
 
@@ -30,6 +30,7 @@ Supabase is the default database. The phone-first PWA (`pwa/`) is the main front
 - Notification checks keep valuing assets at cost: they react to money in and out, not to price swings.
 - The closing statement values plan assets at the price of the month's last day (last trading day on or before it), shown with its date. Stocks use Yahoo's daily close; gold uses the Emas API's update-date filter, which could not be confirmed to hold history, so gold falls back to today's price (clearly dated) if it is not found.
 - "Add money" to a plan never creates a transfer automatically.
+- Holding prices are refreshed with a Sync prices button, not a scheduled job: simpler, no extra secrets, and the data is only needed when someone looks.
 - Receipt photos are not stored. The unused `receipts` table can be dropped later.
 
 ## Parked (off the roadmap)

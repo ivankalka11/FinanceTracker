@@ -176,7 +176,7 @@ Priority: **M** must, **S** should, **C** could. "Version" says where the requir
 | FR-PRC-02 | Stocks are priced from Yahoo Finance; `.JK` is appended to the ticker automatically. Prices may be about 15 minutes delayed. | M | V1, V2 | BR-09 |
 | FR-PRC-03 | Prices are fetched only by the bot, Apps Script or the `prices` Edge Function, never from the browser. | M | V1, V2 | C-3 |
 | FR-PRC-04 | `TelegramBot/diagnose.py` checks gold-pricing connectivity. | C | V1 | BR-09 |
-| FR-PRC-05 | A scheduled job (`pg_cron` calling the `price-snapshot` Edge Function through `pg_net`) runs every day at 10:00 WIB. It fetches the Antam buyback (if any gold is held) and the price of every held stock and saves one price per asset per day in `price_snapshots`. The function accepts only calls that carry the shared `CRON_SECRET`; signed-in users can read the table, only the function writes it. | S | V2.8 | BR-09 |
+| FR-PRC-05 | The Portfolio page has a **Sync prices** button that asks the `prices` function again for the held stocks and gold, shows when prices were last updated, and says if the gold or a stock price could not be fetched. Prices also load when the app opens. Taps within 15 seconds of an update are ignored to protect the gold API's rate limit. | S | V2.8 | BR-09 |
 
 ### 3.7 Reports
 
@@ -369,7 +369,6 @@ Ledger tables (built, migration `20261117000000_ledger_closing.sql`), plan and n
 | `plans` | `id`, `household_id`, `name`, `icon`, `note`, `target_amount > 0`, `start_date`, `target_date`, `account_id`, `status` (`active`/`paused`/`achieved`/`cancelled`), `achieved_at`, `behind_since`, `created_by`, `created_at` | `achieved_at` and `behind_since` are set by the database only. |
 | `plan_ledger` | `id`, `household_id`, `plan_id`, `entry_type` (`deposit`/`withdrawal`/`adjustment`/`asset_in`/`asset_out`), `date`, `amount` (signed), `note`, `transaction_id` (unique, nullable), `holding_id` (null after the lot is gone), `asset_type`, `ticker`, `asset_name`, `quantity`, `unit_price`, `created_by`, `created_at` | Was `plan_contributions` (V2.5). Asset columns are filled only on asset entries. Members can write cash entries only. |
 | `plan_holdings` | `id`, `household_id`, `plan_id`, `holding_id`, `quantity > 0`, `created_by`, `created_at` | Unique on `(plan_id, holding_id)`. The total assigned from a lot never exceeds its quantity. Changed only through the assign, release and sale functions. |
-| `price_snapshots` | `asset_type`, `ticker` (gold = `LM`), `price_date`, `price > 0`, `fetched_at` | One price per asset per day, shared by all households; written only by the `price-snapshot` function. |
 | `month_end_prices` | `household_id`, `month`, `asset_type`, `ticker`, `name`, `price > 0`, `price_date` | Market prices of the month's last trading day, saved before closing; read-only for the app. |
 | `plan_contributions` (view) | the deposit rows of `plan_ledger` | Compatibility view so the pre-V2.6 app keeps working. |
 | `plan_ledger_running` (view) | `plan_ledger` plus `cash_balance` and `value_balance` per plan | Running balances in date order. |

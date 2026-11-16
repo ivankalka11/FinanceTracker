@@ -19,9 +19,8 @@ docker cp supabase/migrations/20261121000000_scheduled_jobs.sql ft-pgtest:/t/60.
 docker cp tests/sql/ledger_test.sql ft-pgtest:/t/ledger.sql
 docker cp tests/sql/plans_test.sql ft-pgtest:/t/plans.sql
 docker cp tests/sql/plan_ledger_test.sql ft-pgtest:/t/plan_ledger.sql
-docker cp tests/sql/price_snapshots_test.sql ft-pgtest:/t/price_snapshots.sql
 status=0
-for t in ledger plans plan_ledger price_snapshots; do
+for t in ledger plans plan_ledger; do
   echo "== $t"
   docker exec ft-pgtest psql -U postgres -q -c "drop database if exists t" -c "create database t" >/dev/null
   docker exec ft-pgtest psql -U postgres -d t -q -f /t/00.sql >/dev/null 2>&1   # roles already exist after the first run

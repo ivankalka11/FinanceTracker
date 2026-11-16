@@ -12,6 +12,7 @@
   let sb = null;
   let charts = [];
   let pricesDown = false;
+  let syncing = false;
 
   const S = {
     session: null, households: [], household: null,
@@ -91,7 +92,7 @@
   function saveCache() {
     store.set("ft.cache", {
       household: S.household, households: S.households, accounts: S.accounts, categories: S.categories,
-      txns: S.txns, holdings: S.holdings, sales: S.sales, members: S.members, prices: S.prices,
+      txns: S.txns, holdings: S.holdings, sales: S.sales, members: S.members, prices: S.prices, pricesAt: S.pricesAt,
       closings: S.closings, ledgerReady: S.ledgerReady,
       plans: S.plans, ledger: S.ledger, planHoldings: S.planHoldings, earmarks: S.earmarks,
       plansLedger: S.plansLedger, plansReady: S.plansReady,
@@ -175,18 +176,34 @@
     saveCache();
   }
 
-  async function loadPrices() {
+  // manual = the Sync prices button: asks again even if an earlier call failed, and reports the result
+  async function loadPrices(manual = false) {
     const tickers = [...new Set(S.holdings.filter((h) => h.asset_type === "stock").map((h) => h.ticker))];
     const gold = S.holdings.some((h) => h.asset_type === "gold");
-    if ((!tickers.length && !gold) || pricesDown) return;
+    if (!tickers.length && !gold) { if (manual) toast("No holdings to price yet."); return; }
+    if (pricesDown && !manual) return;
     try {
       const { data, error } = await sb.functions.invoke("prices", { body: { tickers, gold } });
       // function not deployed yet: holdings show at cost; stop asking until the next app start
-      if (error || !data) { pricesDown = true; return; }
+      if (error || !data) {
+        pricesDown = true;
+        if (manual) toast("Could not reach the price service. Is the prices function deployed?");
+        return;
+      }
+      pricesDown = false;
       S.prices = data;
+      S.pricesAt = Date.now();
       saveCache();
       if (["home", "portfolio"].includes(currentTab())) route();
-    } catch { /* offline */ }
+      if (manual) {
+        const missing = tickers.filter((t) => !(data.stocks && data.stocks[t]));
+        if (gold && !data.gold) toast("Gold price unavailable. Check the EMAS_API_KEY secret on Supabase.");
+        else if (missing.length) toast(`Prices updated, but no price for ${missing.join(", ")}.`);
+        else toast("Prices updated");
+      }
+    } catch {
+      if (manual) toast("Could not sync prices. Check your connection.");
+    }
   }
 
   async function flushQueue() {
@@ -783,8 +800,11 @@
           <div class="stat"><span>Unrealized</span><b class="num ${pl < 0 ? "down" : "up"}">${priced.length ? compact(pl) : "n/a"}</b></div>
           <div class="stat"><span>Realized</span><b class="num ${realized < 0 ? "down" : "up"}">${compact(realized)}</b></div>
         </div>
-        ${S.prices ? "" : `<p class="muted" style="font-size:12.5px;margin:0">Live prices are not connected yet, so holdings show at cost.</p>`}
-        <div class="row"><button class="pill" data-act="holding">${icon("plus")} Add holding</button></div>
+        <p class="muted" style="font-size:12.5px;margin:0">${S.prices
+          ? (S.pricesAt ? `Prices updated ${new Date(S.pricesAt).toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" })}. Tap Sync prices to refresh.` : "Tap Sync prices to refresh.")
+          : "Live prices are not connected yet, so holdings show at cost. Tap Sync prices to try again."}</p>
+        <div class="row"><button class="pill" data-act="holding">${icon("plus")} Add holding</button>
+          <button class="pill ghost" data-act="sync-prices" id="sync-prices">${icon("refresh")} Sync prices</button></div>
       </div>
       <div class="sheet">
         <h2>Holdings</h2>${rows}
@@ -2007,6 +2027,15 @@
     },
     dismiss: (el, ev) => { if (ev.target === el) closeSheet(); },
     "signout-ask": () => sheetSignOut(),
+    async "sync-prices"(el) {
+      if (syncing) return;
+      if (Date.now() - (S.pricesAt || 0) < 15000) { toast("Prices were just updated."); return; } // spare the gold API's rate limit
+      syncing = true;
+      el.disabled = true;
+      el.lastChild.textContent = " Syncing...";
+      try { await loadPrices(true); } finally { syncing = false; }
+      route(); // repaints the page, which also re-enables the button
+    },
 
     "txn-type": (el) => {
       $("#txn-type").value = el.dataset.id;
