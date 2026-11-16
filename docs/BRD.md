@@ -190,8 +190,8 @@ Priority: **M** = must have, **S** = should have, **C** = could have.
 | V2.1 | Supabase schema, row-level security, RPCs, Sheet import. | Done |
 | V2.2 | Phone-first PWA with offline queue, hosted on Cloudflare Pages. | Done |
 | V2.3 | In-app scanning: on-device PaddleOCR by default, optional Gemini function. | Done |
-| V2.4 | Monthly ledger closing (draft statement, manual close by the owner, lock, reopen, history). | In progress |
-| V2.5 | Plans module with progress and notifications. | Planned |
+| V2.4 | Monthly ledger closing (draft statement, manual close by the owner, lock, reopen, history). | Done |
+| V2.5 | Plans module with progress and notifications. | In progress (database done) |
 
 ## 14. Approval
 

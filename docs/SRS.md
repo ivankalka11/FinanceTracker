@@ -165,6 +165,7 @@ Priority: **M** must, **S** should, **C** could. "Version" says where the requir
 | FR-INV-06 | Users can sell a quantity of a position at a unit price into an account. The sale consumes lots oldest first, rejects selling more than is held, and records quantity, average buy price, sell price, proceeds, cost basis and realized P&L (`sell_holding` RPC in V2; `sellHolding` in V1). | M | V1, V2 | BR-08 |
 | FR-INV-07 | A sale also writes an income transaction (category "Asset Sale") for the proceeds into the chosen account. | M | V1, V2 | BR-08 |
 | FR-INV-08 | Users can list realized sales with totals. | M | V1, V2 | BR-08 |
+| FR-INV-09 | Users can delete a position entered by mistake (all its lots, two taps). No sale is recorded and any invest transaction is kept. | S | V1, V2 | BR-07 |
 | FR-INV-09 | Users can delete a holding lot. | M | V1, V2 | BR-07 |
 
 ### 3.6 Pricing
@@ -252,39 +253,39 @@ A *period* is one calendar month in Asia/Jakarta time. A period is **open** unti
 | FR-CLS-09 | An owner can reopen the most recent closed period (`reopen_period`), giving a reason. The reopen is logged in `ledger_closing_events` (who, when, reason). The old snapshot is kept as a previous version; closing again creates a new version. Reopening an earlier period requires reopening the later ones first. | S | V2 | BR-24 |
 | FR-CLS-10 | A "Statements" list shows every period with status (running, ready to close, open, closed, locked before the first close) and the closing date and version; a closed month also shows its close/reopen history. Opening a closed one shows its stored snapshot, not live figures. | S | V2 | BR-26 |
 | FR-CLS-11 | A closed statement can be printed or saved as PDF (print stylesheet) and exported as CSV (summary and transactions). | S | V2 | BR-26 |
-| FR-CLS-12 | The owner is reminded on the last day of the month at 19:00 WIB, and on days 1, 3 and 7 of the next month while the previous month is still open. Uses the notification channel of section 3.14. | S | Planned | BR-27 |
+| FR-CLS-12 | The owner is reminded on the last day of the month at 19:00 WIB, and on days 1, 3 and 7 of the next month while the previous month is still open. Uses the notification channel of section 3.14. | S | V2.5 | BR-27 |
 | FR-CLS-13 | Investment holdings are not locked by closing; the statement stores their market value and unrealized P&L at the moment of closing. | M | V2 | BR-20 |
-| FR-CLS-14 | V1 (Sheet) has no closing; the feature is V2 only. | M | Planned | — |
+| FR-CLS-14 | V1 (Sheet) has no closing; the feature is V2 only. | M | V2 | — |
 
-### 3.13 Plans (planned, V2)
-
-| ID | Requirement | Pri | Version | Trace |
-| --- | --- | --- | --- | --- |
-| FR-PLN-01 | Users can create a plan with: name (required), target amount (> 0, required), target date (required, in the future), icon (emoji), note, linked account (optional), and start date (default today). | M | Planned | BR-28 |
-| FR-PLN-02 | Users can edit any field of a plan and delete a plan that has no contributions. A plan with contributions can only be cancelled. | M | Planned | BR-28, BR-31 |
-| FR-PLN-03 | Users can add a contribution (amount > 0, date, note) and delete one. Optionally a contribution can be linked to an existing transaction (for example a transfer into the savings account); a transaction can fund only one contribution. | M | Planned | BR-29 |
-| FR-PLN-04 | For each plan the app computes: `saved` = sum of contributions; `progress` = saved ÷ target (capped at 100% for display); `remaining` = max(target − saved, 0); `months_left` = whole months from today to the target date (minimum 1); `monthly_needed` = remaining ÷ months_left. | M | Planned | BR-30 |
-| FR-PLN-05 | Status: **achieved** when saved ≥ target; **behind** when saved < target × (elapsed days ÷ total days between start and target date) − 5% of target; **on track** otherwise; **overdue** when the target date has passed and the plan is not achieved. Paused and cancelled plans show those statuses instead. | M | Planned | BR-30 |
-| FR-PLN-06 | A "Plans" screen lists active plans with a progress bar, saved / target, monthly needed and status; achieved, paused and cancelled plans are in a separate collapsed list. Tapping a plan opens its detail with contribution history and a progress chart over time. | M | Planned | BR-30 |
-| FR-PLN-07 | Users can pause, resume, mark achieved (even below target) or cancel a plan. Paused plans get no "behind" or reminder notifications. | S | Planned | BR-31 |
-| FR-PLN-08 | The Home screen shows the top 3 active plans by nearest target date. | C | Planned | BR-30 |
-| FR-PLN-09 | Notifications for a plan (see 3.14): milestone at 25%, 50%, 75% and 100% (each sent once); status turned to behind (once per change); target date 30 days and 7 days away; overdue; a monthly reminder on the 25th showing the amount still needed this month. | M | Planned | BR-32 |
-| FR-PLN-10 | Plans are household data: all members can see and contribute; notifications go to the owner, and to other members who turn them on. | S | Planned | BR-28, BR-33 |
-| FR-PLN-11 | The closing statement lists, per plan, contributions made in the period and progress at period end. | C | Planned | BR-34 |
-| FR-PLN-12 | Contributions dated in a closed period follow the same lock as transactions (FR-CLS-07). | S | Planned | BR-23 |
-
-### 3.14 Notifications (planned, V2)
+### 3.13 Plans (V2.5)
 
 | ID | Requirement | Pri | Version | Trace |
 | --- | --- | --- | --- | --- |
-| FR-NTF-01 | A scheduled job (Supabase `pg_cron` calling a `notify` Edge Function) runs every day at 07:00 WIB, plus the month-end run at 19:00 WIB, and works out which plan and closing notifications are due. | M | Planned | BR-27, BR-32 |
-| FR-NTF-02 | Each notification is written to a `notifications` table first (user, kind, title, body, link, created_at, read_at), then delivered. A unique key per (user, kind, subject, period) prevents duplicates. | M | Planned | BR-32 |
+| FR-PLN-01 | Users can create a plan with: name (required), target amount (> 0, required), target date (required, in the future), icon (emoji), note, linked account (optional), and start date (default today). | M | V2.5 | BR-28 |
+| FR-PLN-02 | Users can edit any field of a plan and delete a plan that has no contributions. A plan with contributions can only be cancelled. | M | V2.5 | BR-28, BR-31 |
+| FR-PLN-03 | Users can add a contribution (amount > 0, date, note) and delete one. Optionally a contribution can be linked to an existing transaction (for example a transfer into the savings account); a transaction can fund only one contribution. | M | V2.5 | BR-29 |
+| FR-PLN-04 | For each plan the app computes: `saved` = sum of contributions; `progress` = saved ÷ target (capped at 100% for display); `remaining` = max(target − saved, 0); `months_left` = whole months from today to the target date (minimum 1); `monthly_needed` = remaining ÷ months_left. | M | V2.5 | BR-30 |
+| FR-PLN-05 | Status: **achieved** when saved ≥ target; **behind** when saved < target × (elapsed days ÷ total days between start and target date) − 5% of target; **on track** otherwise; **overdue** when the target date has passed and the plan is not achieved. Paused and cancelled plans show those statuses instead. | M | V2.5 | BR-30 |
+| FR-PLN-06 | A "Plans" screen lists active plans with a progress bar, saved / target, monthly needed and status; achieved, paused and cancelled plans are in a separate collapsed list. Tapping a plan opens its detail with contribution history and a progress chart over time. | M | V2.5 | BR-30 |
+| FR-PLN-07 | Users can pause, resume, mark achieved (even below target) or cancel a plan. Paused plans get no "behind" or reminder notifications. | S | V2.5 | BR-31 |
+| FR-PLN-08 | The Home screen shows the top 3 active plans by nearest target date. | C | V2.5 | BR-30 |
+| FR-PLN-09 | Notifications for a plan (see 3.14): milestone at 25%, 50%, 75% and 100% (each sent once); status turned to behind (once per change); target date 30 days and 7 days away; overdue; a monthly reminder on the 25th showing the amount still needed this month. | M | V2.5 | BR-32 |
+| FR-PLN-10 | Plans are household data: all members can see and contribute; notifications go to the owner, and to other members who turn them on. | S | V2.5 | BR-28, BR-33 |
+| FR-PLN-11 | The closing statement lists, per plan, contributions made in the period and progress at period end. | C | V2.5 | BR-34 |
+| FR-PLN-12 | Contributions dated in a closed period follow the same lock as transactions (FR-CLS-07). | S | V2.5 | BR-23 |
+
+### 3.14 Notifications (V2.5; Web Push planned)
+
+| ID | Requirement | Pri | Version | Trace |
+| --- | --- | --- | --- | --- |
+| FR-NTF-01 | A scheduled job (Supabase `pg_cron` calling `run_notifications()`) runs every day at 07:00 and 19:00 WIB and works out which plan and closing notifications are due. The app runs the same check for its household when it opens (`check_notifications()`), so nothing depends on the schedule alone. | M | V2.5 | BR-27, BR-32 |
+| FR-NTF-02 | Each notification is written to a `notifications` table first (user, kind, title, body, link, created_at, read_at), then delivered. A unique key per (user, kind, subject, period) prevents duplicates. | M | V2.5 | BR-32 |
 | FR-NTF-03 | Delivery channels: Web Push to every device the user has subscribed (`push_subscriptions`, VAPID keys held as function secrets); Telegram message when the user's account is linked and the bot is deployed. | M | Planned | BR-33 |
-| FR-NTF-04 | The app shows an in-app notification list (bell icon with unread count) so nothing is lost when push is blocked. | M | Planned | BR-33 |
-| FR-NTF-05 | Settings lets each user turn push on or off for this device and turn each kind (plan milestones, plan behind, plan deadlines, monthly plan reminder, month-close reminder) on or off. | S | Planned | BR-33 |
-| FR-NTF-06 | Tapping a notification opens the related plan or statement. | S | Planned | BR-33 |
+| FR-NTF-04 | The app shows an in-app notification list (bell icon with unread count) so nothing is lost when push is blocked. | M | V2.5 | BR-33 |
+| FR-NTF-05 | Settings lets each user turn push on or off for this device and turn each kind (plan milestones, plan behind, plan deadlines, monthly plan reminder, month-close reminder) on or off. | S | V2.5 (kinds; push switch with Web Push) | BR-33 |
+| FR-NTF-06 | Tapping a notification opens the related plan or statement. | S | V2.5 | BR-33 |
 | FR-NTF-07 | On iPhone, push is only offered once the app is installed to the home screen; the app explains this. | S | Planned | BR-33 |
-| FR-NTF-08 | Milestone and achieved notifications are also checked immediately after a contribution is saved, not only by the daily job. | S | Planned | BR-32 |
+| FR-NTF-08 | Milestone and achieved notifications are also checked immediately after a contribution is saved, not only by the daily job. | S | V2.5 | BR-32 |
 
 ### 3.15 V1 API (Apps Script)
 
@@ -342,18 +343,18 @@ All calls go to the `/exec` URL with `?action=...` and the shared secret.
 | `telegram_state` | per Telegram user, `state` (JSON) | |
 | `ocr_usage` | `user_id`, `day`, `scans` | |
 
-Ledger tables (built, migration `20261117000000_ledger_closing.sql`) and planned tables (plans, notifications):
+Ledger tables (built, migration `20261117000000_ledger_closing.sql`) and plan and notification tables (built, migration `20261118000000_plans.sql`; app screens not yet):
 
 | Table | Key columns | Notes |
 | --- | --- | --- |
 | `ledger_closings` | `id`, `household_id`, `month` (first day of month), `version`, `status` (`closed`/`superseded`), totals (income, expense, invest, savings_rate, realized_pl, portfolio_value, unrealized_pl), `by_category` (JSON), `plans` (JSON), `checklist` (JSON), `notes`, `closed_by`, `closed_at` | Unique on `(household_id, month, version)`; rows are never updated except `status`. |
 | `ledger_closing_accounts` | `id`, `closing_id`, `household_id`, `account_id` (null = unassigned entries), `sort_order`, `account_name`, `opening`, `income`, `expense`, `invest`, `transfer_in`, `transfer_out`, `closing`, `bank_balance`, `difference`, `difference_note` | One row per account per closing. |
 | `ledger_closing_events` | `id`, `household_id`, `month`, `version`, `action` (`close`/`reopen`), `reason`, `user_id`, `at` | Audit trail. |
-| `plans` | `id`, `household_id`, `name`, `icon`, `note`, `target_amount > 0`, `start_date`, `target_date`, `account_id`, `status` (`active`/`paused`/`achieved`/`cancelled`), `achieved_at`, `created_by`, `created_at` | |
+| `plans` | `id`, `household_id`, `name`, `icon`, `note`, `target_amount > 0`, `start_date`, `target_date`, `account_id`, `status` (`active`/`paused`/`achieved`/`cancelled`), `achieved_at`, `behind_since`, `created_by`, `created_at` | `achieved_at` and `behind_since` are set by the database only. |
 | `plan_contributions` | `id`, `household_id`, `plan_id`, `date`, `amount > 0`, `note`, `transaction_id` (unique, nullable), `created_by`, `created_at` | |
 | `notifications` | `id`, `household_id`, `user_id`, `kind`, `subject_id`, `period_key`, `title`, `body`, `link`, `created_at`, `sent_at`, `read_at` | Unique on `(user_id, kind, subject_id, period_key)`. |
 | `push_subscriptions` | `id`, `user_id`, `endpoint` (unique), `p256dh`, `auth`, `user_agent`, `created_at` | Per device. |
-| `notification_prefs` | `user_id`, `kind`, `enabled` | Missing row = enabled. |
+| `notification_prefs` | `user_id`, `kind`, `enabled` | Missing row = on for owners, off for other members (FR-PLN-10). |
 
 Money columns are `numeric(18,2)`; quantities `numeric(18,6)`.
 

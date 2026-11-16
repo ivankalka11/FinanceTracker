@@ -349,6 +349,21 @@ Closing a month saves its statement and locks every entry dated in it or earlier
 5. To fix a closed month: open it, give a reason and tap **Reopen**. Only the latest closed month can be reopened. Closing it again saves a new version; the old one stays in the history.
 6. A closed statement can be printed (or saved as PDF from the print dialog) and exported as CSV.
 
+## V2.5 - plans and notifications
+
+Plans are savings goals (target amount and date) that you put money into over time. The database, the Plans screen and the notification bell are done; phone push comes next.
+
+**Notifications:** the bell on Home shows how many are unread. Tap it for the list; tapping one marks it read and opens its plan or monthly statement. **Mark all read** and **Clear read** tidy the list. New notifications pop up while the app is open (through Supabase Realtime, which the plans migration turns on for the `notifications` table); otherwise they appear the next time the app opens. **Settings → Configuration → Notifications** has a switch per kind: plan milestones, falling behind, deadlines, the monthly reminder, and (owners only) the month-close reminder.
+
+**Using plans:** Home shows a **Plans** card with the three nearest active plans; **See all** (or **+ Start a plan**) opens the Plans screen. Tap a plan to see its progress, a chart of saved money against the plan line, and the money added. **Add money** records money set aside; it can point at an existing income or transfer-in entry so the two are linked. From the same sheet you can edit, pause, resume, mark achieved or cancel a plan; **Delete plan** appears only while the plan has no money in it. Closed monthly statements list each plan's money for that month.
+
+1. Run `20261117000000_ledger_closing.sql` first if you have not. Then, in **SQL Editor**, paste the contents of `supabase/migrations/20261118000000_plans.sql` and run it once.
+2. What it sets up: tables `plans`, `plan_contributions`, `notifications`, `notification_prefs` and `push_subscriptions`; a `plans` section in every new closing statement; and the functions `check_notifications` (the app calls it when it opens) and `save_push_subscription`.
+3. Notifications are created by the database: milestones (25/50/75/100%) as soon as money is added; "behind", 30 and 7 days to go, overdue, the monthly reminder from the 25th, and the month-close reminders when the daily check runs.
+4. The daily check runs at 07:00 and 19:00 WIB through `pg_cron`. If the run prints "pg_cron is not set up", turn on **Database → Extensions → pg_cron** and run the file's last block again; until then the checks still run whenever the app opens.
+5. Owners get every kind of notification unless they turn it off; other members get only the kinds they turn on. Month-close reminders go to owners only.
+6. A plan that has money in it cannot be deleted, only cancelled. Money added to a plan follows the month lock, like transactions.
+
 ## V2 phase 4 - the Telegram bot on Supabase (shelved)
 
 > Not in use. Scanning in the app covers the same need, so this is parked: the code is in the repo but nothing is deployed, and the "Telegram bot" row in Settings is hidden unless `TELEGRAM_BOT: true` is added to `pwa/config.js`. The steps below are kept in case it is wanted later.

@@ -8,7 +8,7 @@
   const $ = (sel, root = document) => root.querySelector(sel);
   const app = $("#app");
   const sheetRoot = $("#sheet-root");
-  const TABS = ["home", "stats", "portfolio", "settings", "activity", "ledger"];
+  const TABS = ["home", "stats", "portfolio", "settings", "activity", "ledger", "plans", "notifications"];
   let sb = null;
   let charts = [];
   let pricesDown = false;
@@ -22,6 +22,11 @@
     scan: null, // rows read from a photo, reviewed one at a time: { rows, index, saved }
     closings: [], // monthly ledger closings (all versions); see the ledger section
     ledgerReady: false, // false until the ledger migration has been run
+    plans: [], ledger: [], // savings goals and their ledger (deposits, withdrawals, assets in and out)
+    planHoldings: [], earmarks: {}, // holdings earmarked for plans; cash set aside per account id
+    plansReady: false, // false until the plans migration has been run
+    plansLedger: false, // false until the plan ledger migration (V2.6) has been run
+    notifs: [], prefs: [], // this user's notifications (newest first) and per-kind settings
   };
 
   const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) =>
@@ -63,6 +68,7 @@
     image: '<rect x="4" y="5" width="16" height="14" rx="2"/><path d="M4 16l5-5 4 4 3-3 4 4"/><circle cx="15" cy="9" r="1.2"/>',
     lock: '<rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 018 0v3"/>',
     next: '<path d="M9 5l7 7-7 7"/>',
+    bell: '<path d="M6 16V11a6 6 0 0112 0v5l1.5 2h-15z"/><path d="M10 20.5a2 2 0 004 0"/>',
   };
   const icon = (name) => `<svg class="i" viewBox="0 0 24 24" aria-hidden="true">${ICON[name]}</svg>`;
 
@@ -87,6 +93,9 @@
       household: S.household, households: S.households, accounts: S.accounts, categories: S.categories,
       txns: S.txns, holdings: S.holdings, sales: S.sales, members: S.members, prices: S.prices,
       closings: S.closings, ledgerReady: S.ledgerReady,
+      plans: S.plans, ledger: S.ledger, planHoldings: S.planHoldings, earmarks: S.earmarks,
+      plansLedger: S.plansLedger, plansReady: S.plansReady,
+      notifs: S.notifs, prefs: S.prefs,
     });
   }
   function loadCache() {
@@ -112,7 +121,8 @@
 
   async function refresh() {
     const hid = S.household.id;
-    const [acc, opening, cat, tx, hold, sales, mem, tele, led] = await Promise.all([
+    const uid = S.session.user.id;
+    const [acc, opening, cat, tx, hold, sales, mem, tele, led, plans, contribs, notifs, prefs, phold, earm] = await Promise.all([
       sb.from("account_balances").select("*").eq("household_id", hid).order("sort_order").order("name"),
       sb.from("accounts").select("id, opening_balance").eq("household_id", hid),
       sb.from("categories").select("*").eq("household_id", hid).order("name"),
@@ -124,8 +134,33 @@
       sb.from("telegram_links").select("linked_at").eq("user_id", S.session.user.id).maybeSingle(),
       sb.from("ledger_closings").select("id, month, version, status, closing, closed_at")
         .eq("household_id", hid).order("month", { ascending: false }),
+      sb.from("plans").select("*").eq("household_id", hid).order("target_date"),
+      sb.from("plan_ledger").select("*").eq("household_id", hid)
+        .order("date", { ascending: false }).order("created_at", { ascending: false }),
+      sb.from("notifications").select("*").eq("user_id", uid).order("created_at", { ascending: false }).limit(60),
+      sb.from("notification_prefs").select("kind, enabled").eq("user_id", uid),
+      sb.from("plan_holdings").select("*").eq("household_id", hid),
+      sb.rpc("account_earmarks", { p_household: hid }),
     ]);
     if (led.error && isNetworkError(led.error)) throw led.error;
+    S.notifs = notifs.error ? [] : notifs.data;
+    S.prefs = prefs.error ? [] : prefs.data;
+    if (plans.error && isNetworkError(plans.error)) throw plans.error;
+    // before the V2.6 migration there is no plan_ledger: read the deposit-only table instead
+    S.plansLedger = !contribs.error;
+    let ledgerRes = contribs;
+    if (contribs.error && !isNetworkError(contribs.error)) {
+      ledgerRes = await sb.from("plan_contributions").select("*").eq("household_id", hid)
+        .order("date", { ascending: false }).order("created_at", { ascending: false });
+    }
+    S.plansReady = !plans.error && !ledgerRes.error; // the tables are missing until the plans migration runs
+    S.plans = (plans.data || []).map((p) => ({ ...p, target_amount: Number(p.target_amount) }));
+    S.ledger = (ledgerRes.data || []).map((c) => ({
+      entry_type: "deposit", ...c, amount: Number(c.amount),
+      quantity: c.quantity == null ? null : Number(c.quantity), unit_price: c.unit_price == null ? null : Number(c.unit_price),
+    }));
+    S.planHoldings = !S.plansLedger || phold.error ? [] : (phold.data || []).map((h) => ({ ...h, quantity: Number(h.quantity) }));
+    S.earmarks = !S.plansLedger || earm.error ? {} : Object.fromEntries((earm.data || []).map((r) => [r.account_id, Number(r.earmarked)]));
     S.ledgerReady = !led.error; // the table is missing until the ledger migration runs
     S.closings = led.data || [];
     const open = Object.fromEntries(check(opening).map((a) => [a.id, Number(a.opening_balance)]));
@@ -257,7 +292,9 @@
     const map = new Map();
     for (const h of S.holdings) {
       const key = `${h.asset_type}|${h.ticker}|${h.name.toLowerCase()}`;
-      const p = map.get(key) || { asset_type: h.asset_type, ticker: h.ticker, name: h.name, qty: 0, cost: 0 };
+      const p = map.get(key) || { asset_type: h.asset_type, ticker: h.ticker, name: h.name, qty: 0, cost: 0, ids: [] };
+      p.ids.push(h.id);
+      p.lots = p.ids.length;
       p.qty += h.quantity;
       p.cost += h.quantity * h.buy_price;
       map.set(key, p);
@@ -267,6 +304,128 @@
       const value = price ? p.qty * price : null;
       return { ...p, avg: p.cost / p.qty, price: price || null, value, pl: value === null ? null : value - p.cost };
     });
+  }
+
+  // ------------------------------------------------------------ plans (savings goals)
+  // Same rules as private.check_plan in the plans migration (FR-PLN-04/05).
+  const daysBetween = (a, b) => Math.round((new Date(b + "T00:00:00") - new Date(a + "T00:00:00")) / 864e5);
+  const PLAN_STATUS = {
+    achieved: ["Achieved", "ok"], ontrack: ["On track", ""], behind: ["Behind", "due"],
+    overdue: ["Overdue", "due"], paused: ["Paused", ""], cancelled: ["Cancelled", ""],
+  };
+
+  // The plan ledger: cash entries move cash, asset rows record gold or stock assigned or released.
+  const isCashEntry = (l) => l.entry_type === "deposit" || l.entry_type === "withdrawal" || l.entry_type === "adjustment";
+  const flowOf = (l) => (l.entry_type === "asset_out" ? -l.amount : l.amount); // value that entered (+) or left (-) the plan
+  const ledgerTable = () => (S.plansLedger ? "plan_ledger" : "plan_contributions");
+  const livePrice = (type, ticker) => (type === "gold" ? S.prices?.gold?.price : S.prices?.stocks?.[ticker]) || null;
+  const earmarkOf = (accountId) => S.earmarks[accountId] || 0;
+  // quantity of a lot not yet earmarked for any plan
+  const lotFree = (lot) => lot.quantity - S.planHoldings.filter((h) => h.holding_id === lot.id).reduce((s, h) => s + h.quantity, 0);
+  const qtyLabel = (type, q) => `${q.toLocaleString("id-ID", { maximumFractionDigits: 4 })} ${type === "gold" ? "g" : "sh"}`;
+
+  // Saved = cash in the plan + its gold and stocks, valued live when prices are
+  // connected and at cost otherwise (the database itself only knows cost).
+  function planStats(p) {
+    const t = today();
+    const entries = S.ledger.filter((c) => c.plan_id === p.id);
+    const cash = entries.filter(isCashEntry).reduce((s, c) => s + c.amount, 0);
+    const assets = S.planHoldings.filter((h) => h.plan_id === p.id).map((h) => {
+      const lot = S.holdings.find((x) => x.id === h.holding_id);
+      if (!lot) return null;
+      const price = livePrice(lot.asset_type, lot.ticker), cost = h.quantity * lot.buy_price;
+      return { id: lot.id, lot, qty: h.quantity, cost, price, value: price ? h.quantity * price : null };
+    }).filter(Boolean);
+    const assetCost = assets.reduce((s, a) => s + a.cost, 0);
+    const assetValue = assets.reduce((s, a) => s + (a.value ?? a.cost), 0);
+    const saved = cash + assetValue;
+    const target = p.target_amount;
+    const remaining = Math.max(target - saved, 0);
+    // whole months from today to the target date, rounded up, at least 1
+    const [y, m, d] = t.split("-").map(Number), [ty, tm, td] = p.target_date.split("-").map(Number);
+    const monthsLeft = Math.max(1, (ty - y) * 12 + (tm - m) + (td > d ? 1 : 0));
+    const total = Math.max(daysBetween(p.start_date, p.target_date), 1);
+    const elapsed = Math.min(Math.max(daysBetween(p.start_date, t), 0), total);
+    const expected = (target * elapsed) / total;
+    let status = p.status === "active" ? "ontrack" : p.status;
+    if (p.status === "active") {
+      if (saved >= target) status = "achieved";
+      else if (p.target_date < t) status = "overdue";
+      else if (saved < expected - target * 0.05) status = "behind";
+    }
+    return {
+      entries, cash, assets, assetCost, assetValue, live: assets.every((a) => a.value !== null),
+      saved, target, remaining, monthsLeft, expected, status,
+      progress: Math.min(saved / target, 1), monthly: remaining / monthsLeft,
+      daysLeft: daysBetween(t, p.target_date),
+    };
+  }
+
+  const runningPlans = () => S.plans.filter((p) => p.status === "active" || p.status === "paused");
+  const planTag = (st) => `<span class="tag ${PLAN_STATUS[st.status][1]}">${PLAN_STATUS[st.status][0]}</span>`;
+  const planBar = (st) => `<span class="bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(st.progress * 100)}"><i style="width:${(st.progress * 100).toFixed(1)}%"></i></span>`;
+
+  // ------------------------------------------------------------ notifications
+  // Rows are created only by the database (plans migration). The app runs the
+  // daily checks when it opens, listens for new rows, and marks them read.
+  const NOTIF_GROUPS = [ // the switches in Settings (FR-NTF-05); each covers one or more kinds
+    { id: "milestones", label: "Plan milestones", hint: "25%, 50%, 75% and reaching the target", kinds: ["plan_milestone", "plan_achieved"] },
+    { id: "behind", label: "Plan falling behind", hint: "When a plan drops below its plan line", kinds: ["plan_behind"] },
+    { id: "deadlines", label: "Plan deadlines", hint: "30 and 7 days before the target date, and overdue", kinds: ["plan_deadline", "plan_overdue"] },
+    { id: "monthly", label: "Monthly plan reminder", hint: "From the 25th, when this month's share is not in yet", kinds: ["plan_monthly"] },
+    { id: "close", label: "Month-close reminder", hint: "Last day of the month, then days 1, 3 and 7", kinds: ["month_close"], owner: true },
+  ];
+  const unreadCount = () => S.notifs.filter((n) => !n.read_at).length;
+  const prefOn = (kind) => {
+    const row = S.prefs.find((p) => p.kind === kind);
+    return row ? row.enabled : isOwner(); // no row: owners get everything, other members nothing
+  };
+
+  function paintBell() {
+    const b = $("#bell-count"), n = unreadCount();
+    if (!b) return;
+    b.textContent = n > 99 ? "99+" : String(n);
+    b.hidden = !n;
+    b.closest("button")?.setAttribute("aria-label", n ? `Notifications, ${n} unread` : "Notifications");
+  }
+
+  const timeAgo = (ts) => {
+    const s = (Date.now() - new Date(ts)) / 1000;
+    if (s < 60) return "baru saja";
+    if (s < 3600) return `${Math.floor(s / 60)} mnt`;
+    if (s < 86400) return `${Math.floor(s / 3600)} jam`;
+    if (s < 7 * 86400) return `${Math.floor(s / 86400)} hr`;
+    return fullDate(ts);
+  };
+
+  // Daily checks for this household (the same ones pg_cron runs twice a day).
+  // On open, and again when the app comes back after 30 minutes or more.
+  let checkedAt = 0;
+  async function runChecks() {
+    if (!S.plansReady || !navigator.onLine || Date.now() - checkedAt < 30 * 60e3) return;
+    checkedAt = Date.now();
+    const { error } = await sb.rpc("check_notifications", { p_household: S.household.id });
+    if (error) return;
+    const { data } = await sb.from("notifications").select("*").eq("user_id", S.session.user.id)
+      .order("created_at", { ascending: false }).limit(60);
+    if (data) { S.notifs = data; saveCache(); paintBell(); }
+  }
+
+  // New rows arrive over Realtime while the app is open (when the table is in
+  // the supabase_realtime publication); otherwise they show on the next refresh.
+  let notifChannel = null;
+  function listenNotifs() {
+    if (notifChannel || !S.plansReady) return;
+    const uid = S.session.user.id;
+    notifChannel = sb.channel(`notifs-${uid}`)
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "notifications", filter: `user_id=eq.${uid}` }, ({ new: n }) => {
+        if (S.notifs.some((x) => x.id === n.id)) return;
+        S.notifs.unshift(n);
+        saveCache();
+        paintBell();
+        toast(n.title);
+      })
+      .subscribe();
   }
 
   // ------------------------------------------------------------ motion
@@ -351,23 +510,22 @@
     if (!S.session) return viewLogin();
     if (!S.household) return viewOnboard();
     const tab = currentTab();
-    ({ home: viewHome, stats: viewStats, portfolio: viewPortfolio, settings: viewSettings, activity: viewActivity, ledger: viewLedger })[tab]();
+    ({ home: viewHome, stats: viewStats, portfolio: viewPortfolio, settings: viewSettings, activity: viewActivity, ledger: viewLedger, plans: viewPlans, notifications: viewNotifSettings })[tab]();
   }
 
   // ------------------------------------------------------------ views: auth + onboarding
   function viewLogin(note = "") {
-    app.innerHTML = `<div class="auth">
-      <div class="hero"><h1>Finance<br>Tracker</h1><p>Sign in to your household's money.</p></div>
-      <div class="sheet">
-        <form data-form="login">
-          <label class="f">Email<input id="login-email" name="email" type="email" autocomplete="email" required></label>
-          <label class="f">Password<input id="login-password" name="password" type="password" autocomplete="current-password"></label>
-          <div class="error" id="login-error">${esc(note)}</div>
-          <button class="pill" type="submit">Sign in</button>
-          <button class="pill dark" type="button" data-act="magic">Email me a sign-in link</button>
-          <p class="hint">Leave the password empty and use the link button if you prefer. Accounts are by invitation only.</p>
-        </form>
-      </div>
+    app.innerHTML = `<div class="auth login">
+      <div class="login-art" aria-hidden="true"><i></i><i></i></div>
+      <div class="login-copy"><h1>Welcome</h1><p>Your household's money, in one place.</p></div>
+      <form data-form="login">
+        <label class="f">Email<input id="login-email" name="email" type="email" autocomplete="email" required placeholder="you@example.com"></label>
+        <label class="f">Password<input id="login-password" name="password" type="password" autocomplete="current-password" placeholder="Leave empty to get a link"></label>
+        <div class="error" id="login-error">${esc(note)}</div>
+        <button class="pill" type="submit">Sign in</button>
+        <button class="pill soft" type="button" data-act="magic">Email me a sign-in link</button>
+        <p class="hint">Accounts are by invitation only.</p>
+      </form>
     </div>`;
   }
 
@@ -419,6 +577,8 @@
         <div class="wc-body">
           <span>In this month<b class="num">${compact(flow(a.id, 1))}</b></span>
           <span>Out this month<b class="num">${compact(flow(a.id, -1))}</b></span>
+          ${earmarkOf(a.id) > 0 ? `<span>Set aside<b class="num">${compact(earmarkOf(a.id))}</b></span>
+          <span>Free to spend<b class="num">${compact(a.balance - earmarkOf(a.id))}</b></span>` : ""}
           <button class="wc-edit" data-act="account" data-id="${a.id}">Edit</button>
         </div>
       </div>`).join("");
@@ -437,7 +597,10 @@
         <div class="row between">
           <div class="row"><div class="avatar">${esc(initials(email))}</div>
             <div><div class="muted" style="font-size:12px">${esc(S.household.name)}</div><b>${esc(email.split("@")[0])}</b></div></div>
-          <button class="icon-btn" data-act="reload" aria-label="Refresh">${icon("refresh")}</button>
+          <div class="row" style="gap:8px">
+            ${S.plansReady ? `<button class="icon-btn bell" data-act="notifs" aria-label="Notifications">${icon("bell")}<span class="badge" id="bell-count" hidden></span></button>` : ""}
+            <button class="icon-btn" data-act="reload" aria-label="Refresh">${icon("refresh")}</button>
+          </div>
         </div>
         <div><div class="balance-label">Total balance</div>
           <div class="balance num"><small>Rp</small><span id="total">${num(total)}</span></div></div>
@@ -457,6 +620,7 @@
         </div>
         ${due ? `<button class="card due-card" data-act="statement" data-id="${due}">
           <span class="grow"><b>Close ${esc(monthLabel(due))}</b><small>Check the figures and bank balances, then lock the month.</small></span>${icon("lock")}</button>` : ""}
+        ${homePlans()}
       </div>
       <div class="sheet">
         <div class="row between"><h2>Recent transactions</h2><button class="link" data-go="activity">View all</button></div>
@@ -464,6 +628,24 @@
       </div>`);
     countUp($("#total"), shownTotal, total);
     shownTotal = total;
+    paintBell();
+  }
+
+  // Home: the three active plans with the nearest target date (FR-PLN-08).
+  function homePlans() {
+    if (!S.plansReady) return "";
+    const top = S.plans.filter((p) => p.status === "active").sort((a, b) => a.target_date.localeCompare(b.target_date)).slice(0, 3);
+    const rows = top.map((p) => {
+      const st = planStats(p);
+      return `<button class="mini-plan" data-act="plan" data-id="${p.id}">
+        <span class="mp-icon" aria-hidden="true">${esc(p.icon)}</span>
+        <span class="grow"><b>${esc(p.name)}</b><small>${Math.round(st.progress * 100)}% · ${compact(st.saved)} of ${compact(st.target)}</small>${planBar(st)}</span>
+        ${planTag(st)}</button>`;
+    }).join("");
+    return `<div class="card">
+      <div class="row between"><h3>Plans</h3>${S.plans.length ? `<button class="link" data-go="plans">See all</button>` : ""}</div>
+      ${rows || `<button class="wc-new" data-act="plan-new">+ Start a plan</button>`}
+    </div>`;
   }
 
   function viewActivity() {
@@ -636,10 +818,94 @@
           ? "Send the bot a receipt photo or /help"
           : "Log entries by chat or by sending a receipt photo"}</small></span>
           <button class="link" data-act="\${S.telegram ? "telegram-unlink" : "telegram-link"}">\${S.telegram ? "Unlink" : "Link Telegram"}</button></div>` : ""}
+        ${S.plansReady ? (() => {
+          const groups = myNotifGroups(), on = groups.filter((g) => g.kinds.every(prefOn)).length;
+          return `<div class="section-label">Configuration</div>
+        <button class="list-row" data-go="notifications"><span class="grow">Notifications<small>${
+          on === groups.length ? "All on" : on === 0 ? "All off" : `${on} of ${groups.length} on`}</small></span>${icon("next")}</button>`;
+        })() : ""}
         <div class="section-label">Data</div>
         <button class="list-row" data-go="ledger"><span class="grow">Monthly statements<small>${lockedThrough()
           ? `Closed through ${esc(monthLabel(latestClosed()))}` : "No month closed yet"}</small></span>${icon("next")}</button>
         <div class="list-row"><span class="grow">Waiting to sync<small>Entries saved while offline</small></span><b class="num">${queue().length}</b></div>
+      </div>`);
+  }
+
+  // ------------------------------------------------------------ notification settings screen
+  const myNotifGroups = () => NOTIF_GROUPS.filter((g) => !g.owner || isOwner());
+
+  function viewNotifSettings() {
+    const owner = isOwner();
+    const rows = myNotifGroups().map((g) => `<label class="list-row switch-row">
+        <span class="grow">${esc(g.label)}<small>${esc(g.hint)}</small></span>
+        <input type="checkbox" class="switch" data-pref="${g.id}" ${g.kinds.every(prefOn) ? "checked" : ""} aria-label="${esc(g.label)}">
+      </label>`).join("");
+    paint("settings", `
+      <div class="top">
+        <div class="row between">
+          <button class="icon-btn" data-go="settings" aria-label="Back">${icon("back")}</button>
+          <h1 class="title">Notifications</h1><span style="width:40px"></span>
+        </div>
+      </div>
+      <div class="sheet">
+        ${S.plansReady ? `<p class="hint" style="margin:0 0 4px">Choose what shows under the bell on Home. ${owner
+          ? "As an owner you get every kind unless you turn it off."
+          : "Members get none until they turn them on."}</p>
+        ${rows}` : `<div class="empty">Notifications are not set up yet. Run <code>supabase/migrations/20261118000000_plans.sql</code>, then refresh.</div>`}
+      </div>`);
+  }
+
+  // ------------------------------------------------------------ plans screen
+  function planRow(p, i = 0) {
+    const st = planStats(p);
+    const sub = st.status === "achieved" || p.status !== "active"
+      ? `${rp(st.saved)} of ${rp(st.target)}`
+      : `${rp(st.saved)} of ${rp(st.target)} · ${compact(st.monthly)}/bln`;
+    return `<button class="tx plan-row" style="--i:${Math.min(i, 12)}" data-act="plan" data-id="${p.id}">
+      <span class="logo emoji" aria-hidden="true">${esc(p.icon)}</span>
+      <span class="body"><b>${esc(p.name)}</b><small>${sub}</small></span>
+      ${planTag(st)}${planBar(st)}
+    </button>`;
+  }
+
+  function viewPlans() {
+    if (!S.plansReady) {
+      return paint("home", `<div class="top">
+        <div class="row between"><button class="icon-btn" data-go="home" aria-label="Back">${icon("back")}</button>
+          <h1 class="title">Plans</h1><span style="width:40px"></span></div>
+        <div class="card"><b>Not set up yet</b><span class="muted" style="font-size:13px">Run <code>supabase/migrations/20261118000000_plans.sql</code> in the Supabase SQL Editor, then refresh.</span></div>
+      </div><div class="sheet"></div>`);
+    }
+    const running = runningPlans().map((p) => [p, planStats(p)]);
+    const active = running.filter(([p]) => p.status === "active");
+    const saved = running.reduce((s, [, st]) => s + st.saved, 0);
+    const target = running.reduce((s, [, st]) => s + st.target, 0);
+    const monthly = active.filter(([, st]) => st.status !== "achieved").reduce((s, [, st]) => s + st.monthly, 0);
+    const behind = active.filter(([, st]) => st.status === "behind" || st.status === "overdue").length;
+    const order = (a, b) => a.target_date.localeCompare(b.target_date);
+    const live = S.plans.filter((p) => p.status === "active").sort(order);
+    const other = S.plans.filter((p) => p.status !== "active")
+      .sort((a, b) => ["paused", "achieved", "cancelled"].indexOf(a.status) - ["paused", "achieved", "cancelled"].indexOf(b.status) || order(a, b));
+    paint("home", `
+      <div class="top">
+        <div class="row between">
+          <button class="icon-btn" data-go="home" aria-label="Back">${icon("back")}</button>
+          <h1 class="title">Plans</h1><span style="width:40px"></span>
+        </div>
+        <div><div class="balance-label">Saved in running plans</div>
+          <div class="balance num"><small>Rp</small>${num(saved)}</div></div>
+        <div class="stats">
+          <div class="stat"><span>Target</span><b class="num">${compact(target)}</b></div>
+          <div class="stat"><span>Needed / month</span><b class="num">${compact(monthly)}</b></div>
+          <div class="stat"><span>Behind</span><b class="num ${behind ? "down" : ""}">${behind}</b></div>
+        </div>
+        <div class="row"><button class="pill" data-act="plan-new">${icon("plus")} New plan</button></div>
+      </div>
+      <div class="sheet">
+        <h2>Active</h2>
+        ${live.map(planRow).join("") || `<div class="empty">No active plans. Start one for something you are saving towards, like a laptop or a wedding.</div>`}
+        ${other.length ? `<details class="fold"><summary>Paused, achieved and cancelled (${other.length})</summary>
+          <div class="fold-body">${other.map(planRow).join("")}</div></details>` : ""}
       </div>`);
   }
 
@@ -697,7 +963,7 @@
         const snap = check(full);
         st = {
           closing: snap, totals: snap, savings_rate: snap.savings_rate, realized_pl: snap.realized_pl,
-          by_category: snap.by_category, checklist: snap.checklist,
+          by_category: snap.by_category, checklist: snap.checklist, plans: snap.plans || [],
           accounts: check(accs).map((a) => ({ ...a, name: a.account_name })),
         };
       } else {
@@ -789,9 +1055,18 @@
       `<div class="list-row"><span class="grow">${e.action === "close" ? `Closed (version ${e.version})` : "Reopened"}${e.reason ? `<small>${esc(e.reason)}</small>` : ""}</span>
         <small>${esc(new Date(e.at).toLocaleString("id-ID", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }))}</small></div>`).join("")}` : "";
 
+    // net money put in this month: deposits - withdrawals + adjustments (older snapshots only have deposits)
+    const planNet = (p) => n(p.contributed) - n(p.withdrawals) + n(p.adjustments);
+    const plans = (st.plans || []).map((p) =>
+      `<div class="list-row"><span class="grow">${esc(p.icon)} ${esc(p.name)}<small>${rp(n(p.saved))} of ${rp(n(p.target))} at month end (${n(p.progress).toLocaleString("id-ID")}%)${
+        n(p.asset_value) ? ` · includes ${rp(n(p.asset_value))} of gold and stocks at ${p.assets_priced === "market" ? "market price" : "cost"}` : ""}${
+        n(p.withdrawals) ? ` · ${rp(n(p.withdrawals))} taken out` : ""}</small></span>
+        <b class="num ${planNet(p) > 0 ? "pos" : ""}">${planNet(p) ? (planNet(p) > 0 ? "+" : "−") + num(Math.abs(planNet(p))) : "0"}</b></div>`).join("");
+
     return `${head}${summary}
       <div class="section-label">Accounts</div>${accounts}
       <div class="section-label">Expenses by category</div>${cats}
+      ${plans ? `<div class="section-label">Plans: added this month</div>${plans}` : ""}
       ${checklist}${action}${history}`;
   }
 
@@ -805,6 +1080,8 @@
       ...st.accounts.map((a) => [a.name, a.opening, a.income, a.expense, a.invest, a.transfer_in, a.transfer_out, a.closing,
         a.bank_balance ?? "", a.difference ?? "", a.difference_note ?? ""]),
       ["Total", T.opening, T.income, T.expense, T.invest, T.transfer_in, T.transfer_out, T.closing], [],
+      ...((st.plans || []).length ? [["Plan", "Added this month", "Taken out", "Cash at month end", "Gold and stocks", "Priced at", "Saved at month end", "Target", "Progress %", "Status"],
+        ...st.plans.map((p) => [p.name, p.contributed, p.withdrawals ?? 0, p.cash ?? p.saved, p.asset_value ?? 0, p.assets_priced ?? "", p.saved, p.target, p.progress, p.status]), []] : []),
       ["Date", "Type", "Category", "Description", "Account", "Amount"],
       ...S.txns.filter((t) => monthStart(t.date) === m).slice().reverse().map((t) =>
         [t.date, t.type, t.type.startsWith("transfer") ? "Transfer" : categoryName(t.category_id), t.description, accountName(t.account_id), t.amount]),
@@ -1177,7 +1454,245 @@
       </div>
       <div class="error"></div>
       <button class="pill" type="submit">Sell</button>
+      <button class="pill danger" type="button" data-act="position-delete" data-id="${index}">Delete ${esc(p.name || p.ticker)}</button>
+      <p class="hint">Delete is for mistakes: it removes ${p.lots > 1 ? `all ${p.lots} lots` : "the holding"} without recording a sale. Any invest transaction stays; delete that from Transactions if needed.</p>
     </form>`);
+  }
+
+  // ------------------------------------------------------------ plan sheets
+  const PLAN_ICONS = ["🎯", "💻", "💍", "🏠", "🚗", "✈️", "🎓", "🏥", "👶", "🕌", "📱", "🛡️"];
+
+  function sheetPlan(id) {
+    const p = S.plans.find((x) => x.id === id);
+    if (!p) return;
+    const st = planStats(p);
+    const cell = (name, value) => `<div><span>${name}</span><b class="num">${value}</b></div>`;
+    const running = p.status === "active" && st.status !== "achieved";
+    const ENTRY = { deposit: "Added", withdrawal: "Taken out", adjustment: "Adjustment", asset_in: "Assigned", asset_out: "Released" };
+    const contribs = st.entries.map((c) => {
+      const asset = c.entry_type === "asset_in" || c.entry_type === "asset_out";
+      const sign = c.amount < 0 || c.entry_type === "asset_out" ? "−" : c.entry_type === "asset_in" || c.amount > 0 ? "+" : "";
+      const what = asset ? ` · ${esc(qtyLabel(c.asset_type, c.quantity))} ${esc(c.asset_name || c.ticker)}` : "";
+      return `<div class="list-row">
+        <span class="grow">${sign}${rp(Math.abs(c.amount))}<small>${ENTRY[c.entry_type]}${what} · ${esc(dateLabel(c.date))}${c.note ? ` · ${esc(c.note)}` : ""}${c.transaction_id ? " · linked to a transaction" : ""}</small></span>
+        ${isLocked(c.date) ? icon("lock") : asset ? "" : `<button class="link" data-act="contribution-delete" data-id="${c.id}">Remove</button>`}
+      </div>`;
+    }).join("") || `<div class="empty">No money added yet.</div>`;
+    const heldRows = st.assets.map((a) => {
+      const pl = a.value === null ? "" : ` · ${a.value >= a.cost ? "+" : "−"}${rp(Math.abs(a.value - a.cost))}`;
+      return `<div class="list-row">
+        <span class="grow">${esc(a.lot.name || a.lot.ticker)} · ${esc(qtyLabel(a.lot.asset_type, a.qty))}<small>${a.value === null ? `${rp(a.cost)} at cost` : `${rp(a.value)} now${pl}`}</small></span>
+        ${p.status === "cancelled" ? "" : `<button class="link" data-act="plan-release" data-plan="${p.id}" data-id="${a.id}">Release</button>`}
+      </div>`;
+    }).join("");
+    const acct = p.account_id ? S.accounts.find((a) => a.id === p.account_id) : null;
+    const statusBtns = {
+      active: [["paused", "Pause"], ["achieved", "Mark achieved"], ["cancelled", "Cancel plan"]],
+      paused: [["active", "Resume"], ["cancelled", "Cancel plan"]],
+      achieved: [["active", "Back to active"]],
+      cancelled: [["active", "Resume"]],
+    }[p.status].map(([to, label]) => `<button class="pill ${to === "cancelled" ? "danger" : "ghost-light"}" type="button"
+        data-act="plan-status" data-id="${p.id}" data-to="${to}">${label}</button>`).join("");
+    const lead = st.status === "achieved" ? `Reached ${rp(st.saved)}${p.achieved_at ? ` on ${esc(fullDate(p.achieved_at))}` : ""}.`
+      : st.status === "overdue" ? `The target date has passed with ${rp(st.remaining)} still to go. Move the date or add money.`
+      : st.status === "behind" ? `By now it should be about ${rp(st.expected)}. Putting in ${rp(st.monthly)} a month still gets there.`
+      : st.status === "paused" ? "Paused: no reminders until you resume it."
+      : st.status === "cancelled" ? "Cancelled. Its history is kept."
+      : `Putting in ${rp(st.monthly)} a month reaches the target by ${esc(fullDate(p.target_date))}.`;
+    openSheet(`${p.icon} ${p.name}`, `<div class="plan-detail">
+      <div class="row between"><b class="num plan-pct">${Math.round(st.progress * 100)}%</b>${planTag(st)}</div>
+      ${planBar(st)}
+      <p class="hint" style="margin:0">${lead}</p>
+      <div class="st-grid">
+        ${cell("Saved", rp(st.saved))}${cell("Target", rp(st.target))}
+        ${st.assets.length ? cell("Cash", rp(st.cash)) + cell(st.live ? "Gold and stocks (live)" : "Gold and stocks (at cost)", rp(st.assetValue)) : ""}
+        ${cell("Remaining", rp(st.remaining))}${cell("Needed / month", running ? rp(st.monthly) : "–")}
+        ${cell("Target date", esc(fullDate(p.target_date)))}${cell(st.daysLeft >= 0 ? "Time left" : "Overdue by",
+          st.daysLeft >= 0 ? `${st.monthsLeft} month${st.monthsLeft === 1 ? "" : "s"}` : `${-st.daysLeft} day${st.daysLeft === -1 ? "" : "s"}`)}
+      </div>
+      ${p.account_id ? `<p class="hint" style="margin:0">Kept in ${esc(accountName(p.account_id))}${S.plansLedger && acct ? ` (${rp(acct.balance - earmarkOf(acct.id))} free to spend)` : ""}. Started ${esc(fullDate(p.start_date))}.</p>`
+        : `<p class="hint" style="margin:0">Started ${esc(fullDate(p.start_date))}.</p>`}
+      ${p.note ? `<p class="hint" style="margin:0">${esc(p.note)}</p>` : ""}
+      <div class="chart-box" style="height:180px"><canvas id="plan-chart" aria-label="Saved over time against the plan"></canvas></div>
+      <div class="error"></div>
+      ${p.status === "cancelled" ? "" : `<div class="plan-actions">
+        <button class="pill" type="button" data-act="plan-money" data-id="${p.id}">${icon("plus")} Add money</button>
+        ${S.plansLedger ? `<button class="pill ghost-light" type="button" data-act="plan-withdraw" data-id="${p.id}">Take out</button>
+        <button class="pill ghost-light" type="button" data-act="plan-assign" data-id="${p.id}">Gold or stock</button>` : ""}
+      </div>`}
+      ${heldRows ? `<div class="section-label">Gold and stocks</div>${heldRows}` : ""}
+      <div class="section-label">Ledger</div>
+      ${contribs}
+      <div class="section-label">Plan</div>
+      <div class="plan-actions">
+        <button class="pill ghost-light" type="button" data-act="plan-edit" data-id="${p.id}">Edit</button>
+        ${statusBtns}
+        ${st.entries.length || st.assets.length ? "" : `<button class="pill danger" type="button" data-act="plan-delete" data-id="${p.id}">Delete plan</button>`}
+      </div>
+    </div>`);
+    drawPlanChart(p, st);
+  }
+
+  // Saved at the end of each month against the straight line from start to target.
+  function drawPlanChart(p, st) {
+    const el = $("#plan-chart");
+    if (!window.Chart || !el) return;
+    const first = monthStart(st.entries.reduce((d, c) => (c.date < d ? c.date : d), p.start_date));
+    const lastM = monthStart(p.target_date > today() ? p.target_date : today());
+    const months = [];
+    for (let m = first; m <= lastM && months.length < 120; m = addMonths(m, 1)) months.push(m);
+    const end = (m) => shiftDay(addMonths(m, 1), -1);
+    const total = Math.max(daysBetween(p.start_date, p.target_date), 1);
+    const line = (m) => {
+      const e = end(m) < p.target_date ? end(m) : p.target_date;
+      return Math.round((st.target * Math.min(Math.max(daysBetween(p.start_date, e), 0), total)) / total);
+    };
+    const savedBy = (m) => (end(m) > today() && m > monthStart(today()) ? null
+      : st.entries.filter((c) => c.date <= end(m)).reduce((s, c) => s + flowOf(c), 0)); // gold and stocks at the price recorded when assigned
+    charts.push(new Chart(el, {
+      type: "line",
+      data: {
+        labels: months.map((m) => new Date(m + "T00:00:00").toLocaleDateString("id-ID", { month: "short", year: "2-digit" })),
+        datasets: [
+          { label: "Saved", data: months.map(savedBy), borderColor: "#f26a2e", backgroundColor: "rgba(242,106,46,0.12)", fill: true, tension: 0.25, pointRadius: 2, spanGaps: false },
+          { label: "Plan", data: months.map(line), borderColor: "#77737c", borderDash: [5, 4], pointRadius: 0, fill: false },
+        ],
+      },
+      options: {
+        maintainAspectRatio: false, animation: reducedMotion() ? false : undefined,
+        interaction: { mode: "index", intersect: false },
+        plugins: { legend: { labels: { color: "#17161a", boxWidth: 10, boxHeight: 10, font: { size: 11 } } },
+                   tooltip: { callbacks: { label: (c) => `${c.dataset.label}: ${rp(c.parsed.y)}` } } },
+        scales: { x: { ticks: { color: "#77737c", maxTicksLimit: 6 }, grid: { display: false } },
+                  y: { beginAtZero: true, ticks: { color: "#77737c", callback: (v) => compact(v) }, grid: { color: "#e7e4e1" } } },
+      },
+    }));
+  }
+
+  function sheetPlanForm(id) {
+    const p = S.plans.find((x) => x.id === id);
+    const icon0 = p?.icon || PLAN_ICONS[0];
+    const tomorrow = shiftDay(today(), 1);
+    openSheet(p ? "Edit plan" : "New plan", `<form data-form="plan">
+      <input type="hidden" name="id" value="${p ? p.id : ""}">
+      <input type="hidden" id="plan-icon" name="icon" value="${esc(icon0)}">
+      <div class="chips icon-chips" role="group" aria-label="Icon">${PLAN_ICONS.map((e) =>
+        `<button type="button" class="chip ${e === icon0 ? "on" : ""}" data-act="plan-icon" data-id="${e}" aria-label="Icon ${e}">${e}</button>`).join("")}</div>
+      <label class="f">Name<input id="plan-name" name="name" required maxlength="60" value="${esc(p?.name || "")}" placeholder="e.g. Buy laptop"></label>
+      <div class="two">
+        <label class="f">Target (Rp)<input id="plan-target" name="target" inputmode="numeric" data-money required value="${p ? num(p.target_amount) : ""}" placeholder="0"></label>
+        <label class="f">Target date<input id="plan-date" name="target_date" type="date" required value="${p?.target_date || ""}" ${p ? "" : `min="${tomorrow}"`}></label>
+      </div>
+      <div class="two">
+        <label class="f">Start date<input id="plan-start" name="start_date" type="date" required value="${p?.start_date || today()}"></label>
+        <label class="f">Kept in<select id="plan-account" name="account">${accountOptions(p?.account_id || "", true)}</select></label>
+      </div>
+      <label class="f">Note (optional)<input id="plan-note" name="note" value="${esc(p?.note || "")}" placeholder="Anything worth remembering"></label>
+      <p class="hint">Progress is measured against a straight line from the start date to the target date.</p>
+      <div class="error"></div>
+      <button class="pill" type="submit">${p ? "Save" : "Create plan"}</button>
+    </form>`);
+  }
+
+  // Money into a plan. It can point at an existing income or transfer-in
+  // transaction (e.g. a move into the savings account); each one funds one plan.
+  function sheetContribution(planId) {
+    const p = S.plans.find((x) => x.id === planId);
+    if (!p) return;
+    const used = new Set(S.ledger.map((c) => c.transaction_id).filter(Boolean));
+    const linkable = S.txns.filter((t) => (t.type === "transfer-in" || t.type === "income") && !used.has(t.id) && !isLocked(t.date))
+      .sort((a, b) => (b.account_id === p.account_id) - (a.account_id === p.account_id) || b.date.localeCompare(a.date))
+      .slice(0, 40);
+    openSheet(`Add money to ${p.name}`, `<form data-form="contribution">
+      <input type="hidden" name="plan" value="${p.id}">
+      ${linkable.length ? `<label class="f">From a transaction (optional)<select id="ctr-tx" name="transaction">
+        <option value="">None, just record the amount</option>
+        ${linkable.map((t) => `<option value="${t.id}" data-amount="${t.amount}" data-date="${t.date}">${esc(dateLabel(t.date))} · ${esc(t.description || categoryName(t.category_id))} · ${esc(accountName(t.account_id))} · ${rp(t.amount)}</option>`).join("")}
+      </select></label>` : ""}
+      <div class="two">
+        <label class="f">Amount (Rp)<input id="ctr-amount" name="amount" inputmode="numeric" data-money required placeholder="0"></label>
+        <label class="f">Date<input id="ctr-date" name="date" type="date" required value="${today()}" min="${minDate()}" max="${today()}"></label>
+      </div>
+      <label class="f">Note (optional)<input id="ctr-note" name="note" placeholder="e.g. Bonus November"></label>
+      <p class="hint">This records money set aside for the plan. It does not move money between accounts; use Transfer for that.</p>
+      <div class="error"></div>
+      <button class="pill" type="submit">Add money</button>
+    </form>`);
+  }
+
+  // Money leaving a plan (for example when it is spent). It records the movement
+  // in the plan; the spending itself is a normal expense on the account.
+  function sheetWithdraw(planId) {
+    const p = S.plans.find((x) => x.id === planId);
+    if (!p) return;
+    const cash = planStats(p).cash;
+    openSheet(`Take money out of ${p.name}`, `<form data-form="withdraw">
+      <input type="hidden" name="plan" value="${p.id}">
+      <p class="hint" style="margin-top:0">${rp(cash)} cash is in this plan.</p>
+      <div class="two">
+        <label class="f">Amount (Rp)<input id="wd-amount" name="amount" inputmode="numeric" data-money required placeholder="0"></label>
+        <label class="f">Date<input id="wd-date" name="date" type="date" required value="${today()}" min="${minDate()}" max="${today()}"></label>
+      </div>
+      <label class="f">Note (optional)<input id="wd-note" name="note" placeholder="e.g. Paid the dentist"></label>
+      <p class="hint">This frees the money from the plan. It does not move money between accounts or record an expense.</p>
+      <div class="error"></div>
+      <button class="pill" type="submit">Take out</button>
+    </form>`);
+  }
+
+  // Earmark gold or stocks you already hold for a plan. They count towards its
+  // total at the live price; the lots stay in your portfolio.
+  function sheetAssign(planId) {
+    const p = S.plans.find((x) => x.id === planId);
+    if (!p) return;
+    const lots = S.holdings.map((h) => ({ h, free: lotFree(h) })).filter((x) => x.free > 0);
+    if (!lots.length) {
+      openSheet("Add gold or stock", `<div class="empty">Nothing free to assign. Buy gold or stocks in Portfolio first, or release some from another plan.</div>`);
+      return;
+    }
+    openSheet(`Add gold or stock to ${p.name}`, `<form data-form="assign">
+      <input type="hidden" name="plan" value="${p.id}">
+      <label class="f">Which holding<select id="as-lot" name="holding">${lots.map(({ h, free }) =>
+        `<option value="${h.id}" data-free="${free}">${esc(h.name || h.ticker)} · ${esc(qtyLabel(h.asset_type, free))} free · bought at ${rp(h.buy_price)}</option>`).join("")}</select></label>
+      <div class="two">
+        <label class="f">Quantity<input id="as-qty" name="qty" inputmode="decimal" required placeholder="e.g. 5"></label>
+        <label class="f">Price now (optional)<input id="as-price" name="price" inputmode="numeric" data-money placeholder="live price"></label>
+      </div>
+      <label class="f">Date<input id="as-date" name="date" type="date" required value="${today()}" min="${minDate()}" max="${today()}"></label>
+      <p class="hint">Grams for gold, shares for stocks. The price is only recorded in the ledger; the plan's total follows the live price.</p>
+      <div class="error"></div>
+      <button class="pill" type="submit">Add to plan</button>
+    </form>`);
+  }
+
+  // ------------------------------------------------------------ notification list
+  function sheetNotifications() {
+    const unread = unreadCount(), read = S.notifs.length - unread;
+    const rows = S.notifs.map((n) => `<button class="notif ${n.read_at ? "" : "unread"}" data-act="notif" data-id="${n.id}">
+        <span class="dot" aria-hidden="true"></span>
+        <span class="grow"><b>${esc(n.title)}</b>${n.body ? `<small>${esc(n.body)}</small>` : ""}</span>
+        <time datetime="${esc(n.created_at)}">${esc(timeAgo(n.created_at))}</time>
+      </button>`).join("");
+    openSheet("Notifications", `<div class="notif-list" id="notif-list">
+      ${rows || `<div class="empty">Nothing yet. Plan milestones, deadlines and month-close reminders show up here.</div>`}
+      ${S.notifs.length ? `<div class="row">
+        ${unread ? `<button class="pill ghost-light" type="button" data-act="notifs-read">Mark all read</button>` : ""}
+        ${read ? `<button class="pill ghost-light" type="button" data-act="notifs-clear">Clear read (${read})</button>` : ""}
+      </div>` : ""}
+      <p class="hint">Choose which kinds you get in Settings → Notifications.</p>
+    </div>`);
+  }
+
+  // Follow a notification's link: 'plan:<id>' or 'statement:<YYYY-MM-01>'.
+  function openNotifLink(link) {
+    const [kind, id] = String(link || "").split(":");
+    if (kind === "plan") {
+      if (S.plans.some((p) => p.id === id)) return sheetPlan(id);
+      closeSheet();
+      return toast("That plan has been deleted");
+    }
+    if (kind === "statement" && id) return sheetStatement(id);
+    closeSheet();
   }
 
   // ------------------------------------------------------------ form handlers
@@ -1232,6 +1747,11 @@
       if (S.scan) return scanNext(true);
       closeSheet();
       await reload("Saved");
+      // spending that cuts into money set aside for plans
+      const acct = S.accounts.find((a) => a.id === row.account_id);
+      if (acct && type !== "income" && earmarkOf(acct.id) > 0 && acct.balance < earmarkOf(acct.id)) {
+        toast(`${acct.name} is now below the ${compact(earmarkOf(acct.id))} set aside for plans`);
+      }
     },
 
     async transfer(fd) {
@@ -1310,6 +1830,13 @@
       }
       const ps = positions();
       const priced = ps.some((p) => p.value !== null);
+      // save today's market price of every asset sitting in a plan, so the statement can value them
+      const inPlans = new Set(S.planHoldings.map((h) => h.holding_id));
+      const planPrices = ps.filter((p) => p.price && p.ids.some((id) => inPlans.has(id)))
+        .map((p) => ({ asset_type: p.asset_type, ticker: p.ticker, name: p.name, price: p.price }));
+      if (S.plansLedger && planPrices.length) {
+        await sb.rpc("set_month_end_prices", { p_household: S.household.id, p_month: m, p_prices: planPrices });
+      }
       check(await sb.rpc("close_period", {
         p_household: S.household.id, p_month: m, p_bank: bank, p_notes: notes, p_note: fd.get("note").trim(),
         p_portfolio_value: ps.length ? ps.reduce((s, p) => s + (p.value ?? p.cost), 0) : null,
@@ -1317,6 +1844,65 @@
       }));
       closeSheet();
       await reload(`${monthLabel(m)} closed`);
+    },
+
+    async plan(fd) {
+      const id = fd.get("id");
+      const row = {
+        name: fd.get("name").trim(), icon: fd.get("icon") || "🎯", note: fd.get("note").trim(),
+        target_amount: parseAmount(fd.get("target")), target_date: fd.get("target_date"),
+        start_date: fd.get("start_date"), account_id: fd.get("account") || null,
+      };
+      if (!row.name) throw new Error("Give the plan a name.");
+      if (!(row.target_amount > 0)) throw new Error("Enter a target above Rp 0.");
+      if (row.target_date <= row.start_date) throw new Error("The target date must be after the start date.");
+      const saved = id
+        ? check(await sb.from("plans").update(row).eq("id", id).select("id").single())
+        : check(await sb.from("plans").insert({ ...row, household_id: S.household.id }).select("id").single());
+      closeSheet();
+      await reload(id ? "Plan saved" : "Plan created");
+      sheetPlan(saved.id);
+    },
+
+    async contribution(fd) {
+      const plan = fd.get("plan");
+      const amount = parseAmount(fd.get("amount"));
+      if (!(amount > 0)) throw new Error("Enter an amount above Rp 0.");
+      check(await sb.from(ledgerTable()).insert({
+        household_id: S.household.id, plan_id: plan, amount, date: fd.get("date"),
+        note: (fd.get("note") || "").trim(), transaction_id: fd.get("transaction") || null,
+      }));
+      closeSheet();
+      await reload("Money added");
+      sheetPlan(plan);
+    },
+
+    async withdraw(fd) {
+      const plan = fd.get("plan"), p = S.plans.find((x) => x.id === plan);
+      const amount = parseAmount(fd.get("amount"));
+      if (!(amount > 0)) throw new Error("Enter an amount above Rp 0.");
+      if (p && amount > planStats(p).cash) throw new Error(`Only ${rp(planStats(p).cash)} cash is in this plan.`);
+      check(await sb.from("plan_ledger").insert({
+        household_id: S.household.id, plan_id: plan, entry_type: "withdrawal", amount: -amount,
+        date: fd.get("date"), note: (fd.get("note") || "").trim(),
+      }));
+      closeSheet();
+      await reload("Money taken out");
+      sheetPlan(plan);
+    },
+
+    async assign(fd) {
+      const plan = fd.get("plan"), lot = S.holdings.find((h) => h.id === fd.get("holding"));
+      const qty = parseQty(fd.get("qty"));
+      if (!lot || !(qty > 0)) throw new Error("Enter a quantity above zero.");
+      if (qty > lotFree(lot) + 1e-9) throw new Error(`Only ${qtyLabel(lot.asset_type, lotFree(lot))} of this holding is free.`);
+      const price = parseAmount(fd.get("price")) || livePrice(lot.asset_type, lot.ticker) || null;
+      check(await sb.rpc("assign_holding_to_plan", {
+        p_plan: plan, p_holding: lot.id, p_quantity: qty, p_price: price, p_date: fd.get("date"),
+      }));
+      closeSheet();
+      await reload("Added to plan");
+      sheetPlan(plan);
     },
 
     async reopen(fd) {
@@ -1455,6 +2041,8 @@
     },
 
     async signout() {
+      if (notifChannel) { sb.removeChannel(notifChannel); notifChannel = null; }
+      checkedAt = 0;
       await sb.auth.signOut();
       localStorage.removeItem("ft.cache");
     },
@@ -1470,6 +2058,108 @@
       if (m) m.style.viewTransitionName = "";
       closeSheet();
       await reload("Deleted");
+    },
+
+    async "position-delete"(el) {
+      const p = positions()[Number(el.dataset.id)];
+      if (!p) return;
+      const key = `pos-${p.ids.join(",")}`;
+      if (armed !== key) { armed = key; el.textContent = "Tap again to delete"; return; }
+      armed = null;
+      check(await sb.from("holdings").delete().in("id", p.ids));
+      closeSheet();
+      await reload(`${p.name || p.ticker} deleted`);
+    },
+
+    notifs: () => sheetNotifications(),
+
+    async notif(el) { // mark read (the list does not wait for it), then open what it points at
+      const n = S.notifs.find((x) => x.id === el.dataset.id);
+      if (!n) return;
+      if (!n.read_at) {
+        n.read_at = new Date().toISOString();
+        saveCache();
+        paintBell();
+        sb.from("notifications").update({ read_at: n.read_at }).eq("id", n.id).then(({ error }) => { if (error) n.read_at = null; });
+      }
+      openNotifLink(n.link);
+    },
+
+    async "notifs-read"() {
+      const ids = S.notifs.filter((n) => !n.read_at).map((n) => n.id);
+      if (!ids.length) return;
+      const at = new Date().toISOString();
+      check(await sb.from("notifications").update({ read_at: at }).in("id", ids));
+      S.notifs.forEach((n) => { if (!n.read_at) n.read_at = at; });
+      saveCache();
+      paintBell();
+      sheetNotifications();
+    },
+
+    async "notifs-clear"() {
+      const ids = S.notifs.filter((n) => n.read_at).map((n) => n.id);
+      if (!ids.length) return;
+      check(await sb.from("notifications").delete().in("id", ids));
+      S.notifs = S.notifs.filter((n) => !n.read_at);
+      saveCache();
+      sheetNotifications();
+    },
+
+    plan: (el) => openFrom(el, () => sheetPlan(el.dataset.id)),
+    "plan-new": () => sheetPlanForm(),
+    "plan-edit": (el) => sheetPlanForm(el.dataset.id),
+    "plan-money": (el) => sheetContribution(el.dataset.id),
+    "plan-withdraw": (el) => sheetWithdraw(el.dataset.id),
+    "plan-assign": (el) => sheetAssign(el.dataset.id),
+
+    async "plan-release"(el) {
+      const lot = S.holdings.find((h) => h.id === el.dataset.id), plan = el.dataset.plan;
+      const key = `release-${plan}-${el.dataset.id}`;
+      if (armed !== key) { armed = key; el.textContent = "Tap again to release"; return; }
+      armed = null;
+      check(await sb.rpc("unassign_holding_from_plan", {
+        p_plan: plan, p_holding: el.dataset.id, p_price: lot ? livePrice(lot.asset_type, lot.ticker) : null,
+      }));
+      closeSheet();
+      await reload("Released from plan");
+      sheetPlan(plan);
+    },
+    "plan-icon": (el) => {
+      $("#plan-icon").value = el.dataset.id;
+      el.parentElement.querySelectorAll(".chip").forEach((c) => c.classList.toggle("on", c === el));
+    },
+
+    async "plan-status"(el) {
+      const p = S.plans.find((x) => x.id === el.dataset.id), to = el.dataset.to;
+      if (!p) return;
+      if (to === "cancelled" && armed !== `cancel-${p.id}`) { armed = `cancel-${p.id}`; el.textContent = "Tap again to cancel"; return; }
+      armed = null;
+      check(await sb.from("plans").update({ status: to }).eq("id", p.id));
+      closeSheet();
+      await reload({ paused: "Plan paused", active: "Plan resumed", achieved: "Marked achieved", cancelled: "Plan cancelled" }[to]);
+      sheetPlan(p.id);
+    },
+
+    async "plan-delete"(el) {
+      if (armed !== el.dataset.id) { armed = el.dataset.id; el.textContent = "Tap again to delete"; return; }
+      armed = null;
+      check(await sb.from("plans").delete().eq("id", el.dataset.id));
+      hero = null;
+      const m = $(".modal", sheetRoot);
+      if (m) m.style.viewTransitionName = "";
+      closeSheet();
+      await reload("Plan deleted");
+    },
+
+    async "contribution-delete"(el) {
+      const c = S.ledger.find((x) => x.id === el.dataset.id);
+      if (!c) return;
+      if (armed !== c.id) { armed = c.id; el.textContent = "Tap again to remove"; return; }
+      armed = null;
+      check(await sb.from(ledgerTable()).delete().eq("id", c.id));
+      closeSheet();
+      await reload("Removed");
+      sheetPlan(c.plan_id);
     },
 
     async "account-archive"(el) {
@@ -1515,20 +2205,47 @@
       out.textContent = diff ? `Differs from the books by ${rp(diff)}` : "Matches the books";
       out.classList.toggle("neg", !!diff);
       note.hidden = !diff;
-      const form = el.closest("form"); // any change cancels a half-done "tap again"
+      const form = el.closest("form"); // any change cancels a half-done "tap again" and clears an old error
+      const err = form && $(".error", form);
+      if (err) err.textContent = "";
       if (form?.dataset.armed) { delete form.dataset.armed; $("button[type=submit]", form).textContent = `Close ${monthLabel(form.month.value)}`; }
     }
   });
 
   document.addEventListener("change", (ev) => {
     const el = ev.target;
+    if (el.dataset.pref) { // Settings → Notifications switch: save every kind in the group
+      const g = NOTIF_GROUPS.find((x) => x.id === el.dataset.pref);
+      const enabled = el.checked, uid = S.session.user.id;
+      el.disabled = true;
+      sb.from("notification_prefs").upsert(g.kinds.map((kind) => ({ user_id: uid, kind, enabled })))
+        .then(({ error }) => {
+          el.disabled = false;
+          if (error) { el.checked = !enabled; return toast(isNetworkError(error) ? "You are offline. Try again when connected." : error.message); }
+          g.kinds.forEach((kind) => {
+            const row = S.prefs.find((p) => p.kind === kind);
+            if (row) row.enabled = enabled; else S.prefs.push({ kind, enabled });
+          });
+          saveCache();
+          toast(`${g.label} ${enabled ? "on" : "off"}`);
+        });
+      return;
+    }
+    if (el.id === "ctr-tx") { // money into a plan from a transaction: take its amount and date
+      const o = el.selectedOptions[0];
+      if (o?.dataset.amount) {
+        $("#ctr-amount").value = num(o.dataset.amount);
+        $("#ctr-date").value = o.dataset.date; // never in a closed month: those are not offered
+      }
+      return;
+    }
     if (!el.matches("input[data-scan]")) return;
     const file = el.files[0];
     el.value = ""; // picking the same photo again must fire change
     runScan(file);
   });
 
-  const TAB_ORDER = { home: 0, activity: 0.5, stats: 1, portfolio: 2, settings: 3, ledger: 3.5 };
+  const TAB_ORDER = { home: 0, activity: 0.5, plans: 0.6, stats: 1, portfolio: 2, settings: 3, notifications: 3.4, ledger: 3.5 };
   let lastTab = currentTab();
   window.addEventListener("hashchange", () => {
     const tab = currentTab();
@@ -1537,6 +2254,9 @@
     transition(() => { closeSheet(); route(); window.scrollTo(0, 0); }, kind);
   });
   window.addEventListener("online", () => { if (S.household) reload(); });
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible" && S.household && S.session) runChecks().catch(() => {});
+  });
   window.addEventListener("offline", () => { S.offline = true; if (S.household) route(); });
 
   // ------------------------------------------------------------ startup
@@ -1552,6 +2272,8 @@
     S.household = res.data[0] || null;
     if (!S.household) return viewOnboard();
     await reload();
+    listenNotifs();
+    runChecks().catch(() => {});
   }
 
   async function boot() {

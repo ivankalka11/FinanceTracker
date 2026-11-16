@@ -177,6 +177,33 @@ form { display: flex; flex-direction: column; gap: 12px; }
 .auth .hero p { margin: 0; color: var(--muted); }
 .auth .sheet { padding-bottom: calc(32px + env(safe-area-inset-bottom, 0px)); gap: 14px; }
 
+/* sign-in: black welcome screen, dotted graphic, white primary and grey secondary pills */
+.auth.login { min-height: 100dvh; padding: 20px 24px calc(28px + env(safe-area-inset-bottom, 0px)); gap: 18px; text-align: center; }
+.login-art { flex: 1; min-height: 190px; display: grid; place-items: center; position: relative; }
+.login-art i { position: absolute; width: 176px; height: 176px; border-radius: 22px;
+  background: radial-gradient(circle, #fff 1.3px, transparent 1.8px) 0 0 / 11px 11px;
+  -webkit-mask-image: radial-gradient(circle at 50% 50%, #000 25%, transparent 72%); mask-image: radial-gradient(circle at 50% 50%, #000 25%, transparent 72%); opacity: 0.3; }
+.login-art i + i { background-image: radial-gradient(circle, var(--orange) 1.6px, transparent 2.1px); opacity: 1;
+  -webkit-mask-image: linear-gradient(115deg, transparent 38%, #000 50%, transparent 62%); mask-image: linear-gradient(115deg, transparent 38%, #000 50%, transparent 62%);
+  -webkit-mask-size: 320% 100%; mask-size: 320% 100%; -webkit-mask-position: 100% 0; mask-position: 100% 0; }
+@media (prefers-reduced-motion: no-preference) {
+  .login-art i + i { animation: login-sweep 4.5s ease-in-out infinite; }
+  @keyframes login-sweep { to { -webkit-mask-position: 0 0; mask-position: 0 0; } }
+}
+.login-copy h1 { margin: 0; font-size: 40px; line-height: 1.1; letter-spacing: -0.03em; font-weight: 800; }
+.login-copy p { margin: 8px 0 0; color: var(--muted); font-size: 14px; }
+.login form { gap: 10px; }
+.login .f { text-align: left; font-size: 12px; font-weight: 600; color: var(--muted); display: flex; flex-direction: column; gap: 6px; }
+.login .f input { height: 50px; border-radius: 999px; border: 1px solid var(--line); background: var(--card); color: #fff; padding: 0 20px; font-size: 16px; }
+.login .f input::placeholder { color: #6b6a72; }
+.login .f input:-webkit-autofill { -webkit-text-fill-color: #fff; box-shadow: 0 0 0 100px var(--card) inset; }
+.login .error { color: var(--red-on-dark); text-align: left; padding: 0 6px; }
+.login .pill { min-height: 52px; flex: none; background: #fff; color: var(--ink); }
+.login .pill:active { background: #e4e2e0; }
+.login .pill.soft { background: #26262b; color: #fff; }
+.login .pill.soft:active { background: #32323a; }
+.login .hint { margin: 4px 0 0; color: #77767e; text-align: center; }
+
 /* ---------- bottom navigation ---------- */
 .nav {
   position: fixed; left: 50%; transform: translateX(-50%);
@@ -186,7 +213,7 @@ form { display: flex; flex-direction: column; gap: 12px; }
   display: flex; align-items: center; justify-content: space-around; padding: 0 6px; z-index: 20;
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
 }
-.nav button { width: 48px; height: 48px; border-radius: 50%; display: grid; place-items: center; color: #fff; position: relative; isolation: isolate; }
+.nav button { width: 48px; height: 48px; border-radius: 50%; display: grid; place-items: center; color: #fff; position: relative; }
 .nav-ind { position: absolute; inset: 0; border-radius: 50%; background: var(--orange); z-index: -1; }
 .nav button.add { color: var(--orange); }
 .nav svg.i { width: 21px; height: 21px; }
@@ -234,6 +261,65 @@ form { display: flex; flex-direction: column; gap: 12px; }
 .pill.ghost-light { background: var(--wash); color: var(--ink); }
 .pill.ghost-light:active { background: var(--rule); }
 
+/* ---------- plans ---------- */
+.bar { display: block; height: 7px; border-radius: 999px; background: var(--wash); overflow: hidden; }
+.bar i { display: block; height: 100%; border-radius: inherit; background: var(--orange); }
+.plan-row { flex-wrap: wrap; row-gap: 10px; }
+.plan-row .bar { flex-basis: 100%; }
+.plan-row .tag { flex: none; }
+.tx .logo.emoji { background: var(--wash); font-size: 20px; font-weight: 400; }
+.mini-plan { display: flex; align-items: center; gap: 12px; width: 100%; text-align: left; color: var(--fg); padding: 2px 0; }
+.mini-plan b { display: block; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mini-plan small { display: block; font-size: 11.5px; color: var(--muted); margin: 1px 0 6px; }
+.mini-plan .bar { background: var(--line); height: 5px; }
+.mini-plan .tag { background: var(--line); color: var(--muted); flex: none; }
+.mini-plan .tag.ok { background: rgba(76, 195, 138, 0.16); color: var(--green-on-dark); }
+.mini-plan .tag.due { background: rgba(240, 138, 99, 0.16); color: var(--red-on-dark); }
+.mp-icon { width: 38px; height: 38px; border-radius: 11px; background: var(--line); display: grid; place-items: center; font-size: 19px; flex: none; }
+.plan-detail { display: flex; flex-direction: column; gap: 10px; }
+.plan-pct { font-size: 28px; letter-spacing: -0.02em; }
+.plan-detail > .bar { height: 10px; }
+.plan-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.plan-actions .pill { min-height: 42px; font-size: 14px; }
+.icon-chips .chip { font-size: 19px; padding: 0; width: 44px; }
+.fold { margin-top: 10px; }
+.fold summary { cursor: pointer; font-size: 13px; font-weight: 700; color: var(--ink-muted); padding: 10px 2px; list-style: none; }
+.fold summary::-webkit-details-marker { display: none; }
+.fold summary::before { content: "▸ "; }
+.fold[open] summary::before { content: "▾ "; }
+.fold-body { display: flex; flex-direction: column; gap: 10px; }
+
+/* ---------- notifications ---------- */
+.bell { position: relative; }
+.badge {
+  position: absolute; top: -4px; right: -4px; min-width: 19px; height: 19px; padding: 0 5px;
+  border-radius: 999px; background: var(--orange); color: #fff; border: 2px solid var(--bg);
+  font-size: 10.5px; font-weight: 800; line-height: 15px; text-align: center;
+}
+.badge[hidden] { display: none; }
+.notif-list { display: flex; flex-direction: column; gap: 8px; }
+.notif { display: flex; align-items: flex-start; gap: 10px; width: 100%; text-align: left; color: var(--ink); padding: 11px 12px; border-radius: 14px; border: 1px solid var(--rule); }
+.notif.unread { background: #fff4ee; border-color: #fbd2bd; }
+.notif b { display: block; font-size: 14px; font-weight: 600; }
+.notif.unread b { font-weight: 800; }
+.notif small { display: block; font-size: 12.5px; color: var(--ink-muted); margin-top: 2px; }
+.notif time { font-size: 11.5px; color: var(--ink-muted); white-space: nowrap; flex: none; }
+.notif .dot { width: 8px; height: 8px; border-radius: 50%; margin-top: 6px; flex: none; background: transparent; }
+.notif.unread .dot { background: var(--orange); }
+.switch-row { cursor: pointer; }
+.switch {
+  appearance: none; -webkit-appearance: none; flex: none; width: 46px; min-height: 0; height: 28px; padding: 0;
+  border-radius: 999px; border: 0; background: var(--rule); position: relative; cursor: pointer; transition: background 0.2s;
+}
+.switch::after {
+  content: ""; position: absolute; top: 3px; left: 3px; width: 22px; height: 22px; border-radius: 50%;
+  background: #fff; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25); transition: transform 0.2s;
+}
+.switch:checked { background: var(--orange); }
+.switch:checked::after { transform: translateX(18px); }
+.switch:disabled { opacity: 0.6; }
+@media (prefers-reduced-motion: reduce) { .switch, .switch::after { transition: none; } }
+
 @media print {
   body { background: #fff; color: #000; }
   #app, #toast { display: none !important; }
@@ -275,6 +361,13 @@ form { display: flex; flex-direction: column; gap: 12px; }
   /* shared elements across screens */
   .nav { view-transition-name: nav; }
   .nav-ind { view-transition-name: nav-ind; }
+  /* The gliding highlight is its own layer, painted over the nav's snapshot. Giving every icon
+     its own layer too keeps the icons on top of it (the highlight sits at z-index -1 in the nav). */
+  .nav button[data-go="home"] svg { view-transition-name: nav-ic-home; }
+  .nav button[data-go="stats"] svg { view-transition-name: nav-ic-stats; }
+  .nav button[data-go="portfolio"] svg { view-transition-name: nav-ic-portfolio; }
+  .nav button[data-go="settings"] svg { view-transition-name: nav-ic-settings; }
+  .nav button.add svg { view-transition-name: nav-ic-add; }
   #app > .sheet { view-transition-name: page; }
 
   ::view-transition-group(*) { animation-duration: 0.42s; animation-timing-function: var(--spring); }
