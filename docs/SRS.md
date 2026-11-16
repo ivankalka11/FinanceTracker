@@ -276,11 +276,11 @@ A *period* is one calendar month in Asia/Jakarta time. A period is **open** unti
 | FR-PLN-13 | Each plan has a ledger (`plan_ledger`). Entry types: `deposit` (amount > 0), `withdrawal` (amount < 0), `adjustment` (either sign, not 0), `asset_in` and `asset_out` (a holding assigned or released: quantity, price, amount = quantity × price). A plan's cash (deposits, withdrawals, adjustments) can never go below zero. Users add and remove cash entries in open months; asset entries are written only by the assign, release and sale functions. | M | V2.6 | BR-36 |
 | FR-PLN-14 | Users can take money out of a plan (amount up to the plan's cash, date, note). This records the movement in the plan only; it creates no transaction and moves no money between accounts. | S | V2.6 | BR-36 |
 | FR-PLN-15 | Users can assign gold or stocks they hold to a plan: choose a lot, a quantity not above what is still free (not assigned to other plans), a date and optionally the price to record (default: the live price, else the lot's cost). They can release it again. A lot can be split across several plans. | S | V2.6 | BR-37 |
-| FR-PLN-16 | Assigned holdings are valued at the live price when prices are connected and at cost otherwise, and the plan screen says which. The database does not know live prices: notification checks (milestones, behind, achieved) use cost. | S | V2.6 | BR-37, BR-30 |
-| FR-PLN-17 | When a lot is sold or deleted, the sold quantity is taken out of the plans it was assigned to (newest assignment first) and an `asset_out` entry is written. The sale proceeds are not added to any plan's cash. | S | V2.6 | BR-37 |
+| FR-PLN-16 | Assigned holdings are valued at the live price when prices are connected and at cost otherwise, and the plan screen says which. The database does not know live prices: notification checks (milestones, behind, achieved) use cost by design, so they react to money put in or taken out and not to price swings; the plan screen says so. | S | V2.6 | BR-37, BR-30 |
+| FR-PLN-17 | When a lot is sold or deleted, the sold quantity is taken out of the plans it was assigned to (newest assignment first) and an `asset_out` entry is written. For a sale (not a plain delete), the proceeds of the sold quantity (quantity × sell price) are also added to each plan's cash as a `deposit` entry ("Sale proceeds: ...") dated today (or the first open day), so the value moves from the asset to cash. Cancelled plans get no deposit. | S | V2.7 | BR-37 |
 | FR-PLN-18 | A plan is a set-aside on its account, not an account. `account_earmarks()` returns the cash set aside per account (plans that are not cancelled). The app shows, per account, balance, set aside, and free to spend = balance − set aside. Gold and stocks are not cash accounts and are not part of the set-aside. | M | V2.6 | BR-35 |
 | FR-PLN-19 | After an expense or investment is saved, the app warns when the account's balance is below the amount set aside. It does not block the entry. | C | V2.6 | BR-39 |
-| FR-PLN-20 | Before an owner closes a month, the app saves today's market price of every asset assigned to a plan (`set_month_end_prices()`, owner only, refused for a closed month). The statement values assigned holdings with those prices; without them it uses the last recorded price (cost) and says so. The prices are the ones available when closing, not necessarily those of the last day of the month. | C | V2.6 | BR-38 |
+| FR-PLN-20 | Before an owner closes a month, the app fetches the market price of the **last day of that month** for every asset assigned to a plan (the closing price of the last trading day on or before it for stocks; the last Antam buyback on or before it, up to 7 days back, for gold) and saves it with `set_month_end_prices()` (owner only, refused for a closed month), together with the day the price is for (`price_date`). The statement values assigned holdings with those prices and shows the day (`prices_on`). If a month-end price cannot be fetched, today's price is saved instead and the statement shows that day; without any saved price it uses cost and says so. | C | V2.6, V2.7 | BR-38 |
 
 ### 3.14 Notifications (V2.5; Web Push planned)
 
@@ -336,7 +336,7 @@ All calls go to the `/exec` URL with `?action=...` and the shared secret.
 | `assign_holding_to_plan(p_plan, p_holding, p_quantity, p_price, p_date)` | RPC | Earmark a quantity of a lot for a plan; writes an `asset_in` entry. |
 | `unassign_holding_from_plan(p_plan, p_holding, p_quantity, p_price, p_date)` | RPC | Release a lot (all of it when no quantity is given); writes an `asset_out` entry. |
 | `account_earmarks(p_household)` | RPC | Cash set aside for plans, per account. |
-| `set_month_end_prices(p_household, p_month, p_prices)` | RPC | Owner-only: saves market prices used to value plan assets in a month's statement. |
+| `set_month_end_prices(p_household, p_month, p_prices)` | RPC | Owner-only: saves market prices (each with its `price_date`) used to value plan assets in a month's statement. |
 | `notify` | Edge Function (planned) | Daily job: works out due notifications and sends Web Push / Telegram. |
 
 ## 4. Data requirements
@@ -368,7 +368,7 @@ Ledger tables (built, migration `20261117000000_ledger_closing.sql`), plan and n
 | `plans` | `id`, `household_id`, `name`, `icon`, `note`, `target_amount > 0`, `start_date`, `target_date`, `account_id`, `status` (`active`/`paused`/`achieved`/`cancelled`), `achieved_at`, `behind_since`, `created_by`, `created_at` | `achieved_at` and `behind_since` are set by the database only. |
 | `plan_ledger` | `id`, `household_id`, `plan_id`, `entry_type` (`deposit`/`withdrawal`/`adjustment`/`asset_in`/`asset_out`), `date`, `amount` (signed), `note`, `transaction_id` (unique, nullable), `holding_id` (null after the lot is gone), `asset_type`, `ticker`, `asset_name`, `quantity`, `unit_price`, `created_by`, `created_at` | Was `plan_contributions` (V2.5). Asset columns are filled only on asset entries. Members can write cash entries only. |
 | `plan_holdings` | `id`, `household_id`, `plan_id`, `holding_id`, `quantity > 0`, `created_by`, `created_at` | Unique on `(plan_id, holding_id)`. The total assigned from a lot never exceeds its quantity. Changed only through the assign, release and sale functions. |
-| `month_end_prices` | `household_id`, `month`, `asset_type`, `ticker`, `name`, `price > 0` | Market prices saved before closing; read-only for the app. |
+| `month_end_prices` | `household_id`, `month`, `asset_type`, `ticker`, `name`, `price > 0`, `price_date` | Market prices of the month's last trading day, saved before closing; read-only for the app. |
 | `plan_contributions` (view) | the deposit rows of `plan_ledger` | Compatibility view so the pre-V2.6 app keeps working. |
 | `plan_ledger_running` (view) | `plan_ledger` plus `cash_balance` and `value_balance` per plan | Running balances in date order. |
 | `notifications` | `id`, `household_id`, `user_id`, `kind`, `subject_id`, `period_key`, `title`, `body`, `link`, `created_at`, `sent_at`, `read_at` | Unique on `(user_id, kind, subject_id, period_key)`. |
@@ -505,9 +505,9 @@ Google Sheet tabs: `Transactions`, `Holdings`, `Realized`. Columns mirror the V2
 
 ## 8. Open items
 
-1. Receipt photo storage (`receipts` table): reserved, not used.
+1. Receipt photos are not stored, by decision. The `receipts` table is unused and can be dropped by a future migration.
 2. Ledger closing (3.12): built (V2.4). The month-close reminders (FR-CLS-12) and the plan section of the statement (FR-PLN-11) are built too.
-3. Plans (3.13): built (V2.5, V2.6). Open decisions: whether the proceeds of selling an assigned holding should go into the plan's cash (today they do not, FR-PLN-17); whether notification checks should use live prices (today cost, FR-PLN-16); whether the closing statement should use the price on the last day of the month instead of the price at closing (FR-PLN-20).
+3. Plans (3.13): built (V2.5 to V2.7). Decided: sale proceeds go into plan cash (FR-PLN-17); notification checks keep using cost (FR-PLN-16); the statement uses last-day-of-month prices (FR-PLN-20); "Add money" never creates a transfer automatically.
 4. Notifications (3.14): in-app list, settings and database checks are built. Web Push delivery is not: it needs VAPID keys, the `notify` function, a `push` handler and a per-device switch, and the PWA's `_headers` must allow the push service endpoints. `pg_cron` must be enabled on the Supabase project.
-5. The V2.5 and V2.6 migrations (`20261118000000_plans.sql`, `20261119000000_plan_ledger.sql`) have been run on the live Supabase project.
+5. The V2.5 and V2.6 migrations (`20261118000000_plans.sql`, `20261119000000_plan_ledger.sql`) have been run on the live Supabase project. The V2.7 migration (`20261120000000_plan_sale_and_month_end.sql`) must be run, and the `prices` function redeployed (`npx supabase functions deploy prices`), for sale proceeds and month-end prices.
 6. Off the roadmap for now: the Telegram webhook (FR-BOT-05 to FR-BOT-08, built but not deployed), Sheets mode and the nightly mirror (FR-MIG-03, FR-MIG-04), and hosting for the V1 bot and dashboard.

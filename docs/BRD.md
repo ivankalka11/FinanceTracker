@@ -142,8 +142,8 @@ Priority: **M** = must have, **S** = should have, **C** = could have.
 | BR-34 | The closing statement lists each plan's contributions for the month and its progress at month end. | C | BO-8, BO-9 |
 | BR-35 | A plan is a set-aside on a real account, not an account of its own, so account balances keep matching the bank. Each account shows its balance, the amount set aside for plans, and what is free to spend. | M | BO-9, BO-3 |
 | BR-36 | Money can also be taken out of a plan (for example when it is spent) and corrected with an adjustment. Every movement is kept in a ledger for the plan, and a plan's cash can never go below zero. | S | BO-9 |
-| BR-37 | Gold and stocks already held can be assigned to a plan. They count towards its total at the live price (at cost when prices are not available), and can be released again. Selling a holding releases it from any plan. | S | BO-9, BO-3 |
-| BR-38 | The closing statement shows, per plan, the cash at the start and end of the month, money added and taken out, the value of gold and stocks, and whether those were valued at market price or at cost. | C | BO-8, BO-9 |
+| BR-37 | Gold and stocks already held can be assigned to a plan. They count towards its total at the live price (at cost when prices are not available), and can be released again. Selling a holding releases it from any plan and the sale proceeds move into that plan's cash. | S | BO-9, BO-3 |
+| BR-38 | The closing statement shows, per plan, the cash at the start and end of the month, money added and taken out, the value of gold and stocks, and whether those were valued at the market price of the month's last day (shown with the date) or at cost. | C | BO-8, BO-9 |
 | BR-39 | The user is warned when an expense takes an account below the amount set aside for plans. | C | BO-9 |
 
 ## 9. Success criteria
@@ -198,6 +198,7 @@ Priority: **M** = must have, **S** = should have, **C** = could have.
 | V2.4 | Monthly ledger closing (draft statement, manual close by the owner, lock, reopen, history). | Done |
 | V2.5 | Plans module with progress and notifications (database, plans screens, in-app bell and notification settings). | Done, except Web Push delivery |
 | V2.6 | Plan ledger (add, take out, adjust), gold and stocks inside plans, set-aside and free-to-spend per account, plan section of the statement with prices. | Done (migration run on the live Supabase project) |
+| V2.7 | Sale proceeds go into plan cash; the statement values plan assets at the price of the month's last day. | Done in code (migration `20261120000000_plan_sale_and_month_end.sql` and the `prices` function still have to be deployed) |
 | Next | Web Push delivery of notifications (VAPID keys, sending function, per-device switch). | Planned |
 
 ## 14. Approval

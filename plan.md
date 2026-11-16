@@ -16,19 +16,20 @@ Supabase is the default database. The phone-first PWA (`pwa/`) is the main front
 | V2.4 | Monthly ledger closing: draft statement, owner closes by hand, lock, reopen, history | Done |
 | V2.5 | Plans, in-app notifications (bell, per-kind switches), `pg_cron` checks at 07:00 and 19:00 WIB | Done, except Web Push |
 | V2.6 | Plan ledger (add, take out, adjust), gold and stocks in plans, set aside and free to spend per account, plan section of the statement | Done; migrations run on the live Supabase project |
+| V2.7 | Sale proceeds go into plan cash; plan assets on the statement valued at the month's last day | Code and tests done; run `20261120000000_plan_sale_and_month_end.sql` on Supabase and redeploy the `prices` function |
 
 ## Next
 
 1. **Web Push delivery** of notifications: VAPID keys, an Edge Function that sends rows with `sent_at is null`, a `push` handler in `pwa/sw.js`, a push switch per device, and the iPhone "Add to Home Screen" note. `pwa/_headers` must allow the push service endpoints.
 2. **Housekeeping on GitHub:** make sure GitHub Pages is turned off in the repository settings (the sample Jekyll workflow was removed).
 
-## Open decisions
+## Decisions made
 
-- Should the proceeds of selling an assigned holding go into the plan's cash? Today they do not.
-- Should notification checks use live prices? Today the database uses cost.
-- Should the closing statement value plan assets at the last day of the month instead of the price at closing?
-- Should a plan contribution create a transfer automatically when a linked account is set?
-- Receipt photo storage (`receipts` table): reserved, not used. Photos are not stored today.
+- Sale proceeds of an assigned holding go into the plan's cash (V2.7).
+- Notification checks keep valuing assets at cost: they react to money in and out, not to price swings.
+- The closing statement values plan assets at the price of the month's last day (last trading day on or before it), shown with its date. Stocks use Yahoo's daily close; gold uses the Emas API's update-date filter, which could not be confirmed to hold history, so gold falls back to today's price (clearly dated) if it is not found.
+- "Add money" to a plan never creates a transfer automatically.
+- Receipt photos are not stored. The unused `receipts` table can be dropped later.
 
 ## Parked (off the roadmap)
 

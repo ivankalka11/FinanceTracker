@@ -1059,7 +1059,7 @@
     const planNet = (p) => n(p.contributed) - n(p.withdrawals) + n(p.adjustments);
     const plans = (st.plans || []).map((p) =>
       `<div class="list-row"><span class="grow">${esc(p.icon)} ${esc(p.name)}<small>${rp(n(p.saved))} of ${rp(n(p.target))} at month end (${n(p.progress).toLocaleString("id-ID")}%)${
-        n(p.asset_value) ? ` · includes ${rp(n(p.asset_value))} of gold and stocks at ${p.assets_priced === "market" ? "market price" : "cost"}` : ""}${
+        n(p.asset_value) ? ` · includes ${rp(n(p.asset_value))} of gold and stocks at ${p.assets_priced === "market" ? `market price${p.prices_on ? " of " + dateLabel(p.prices_on) : ""}` : "cost"}` : ""}${
         n(p.withdrawals) ? ` · ${rp(n(p.withdrawals))} taken out` : ""}</small></span>
         <b class="num ${planNet(p) > 0 ? "pos" : ""}">${planNet(p) ? (planNet(p) > 0 ? "+" : "−") + num(Math.abs(planNet(p))) : "0"}</b></div>`).join("");
 
@@ -1836,10 +1836,27 @@
       }
       const ps = positions();
       const priced = ps.some((p) => p.value !== null);
-      // save today's market price of every asset sitting in a plan, so the statement can value them
+      // save the market price of the month's last day for every asset sitting in a plan, so the
+      // statement can value them (the last trading day on or before it). Where that price cannot be
+      // fetched, today's price is saved and the statement shows the day it is for.
       const inPlans = new Set(S.planHoldings.map((h) => h.holding_id));
-      const planPrices = ps.filter((p) => p.price && p.ids.some((id) => inPlans.has(id)))
-        .map((p) => ({ asset_type: p.asset_type, ticker: p.ticker, name: p.name, price: p.price }));
+      const planPos = ps.filter((p) => p.ids.some((id) => inPlans.has(id)));
+      const lastDay = new Date(Date.UTC(Number(m.slice(0, 4)), Number(m.slice(5, 7)), 0)).toISOString().slice(0, 10);
+      let past = null;
+      if (S.plansLedger && planPos.length && !pricesDown) {
+        try {
+          const r = await sb.functions.invoke("prices", { body: {
+            tickers: [...new Set(planPos.filter((p) => p.asset_type === "stock").map((p) => p.ticker))],
+            gold: planPos.some((p) => p.asset_type === "gold"), date: lastDay } });
+          past = r.error ? null : r.data;
+        } catch { /* fall back to today's price below */ }
+      }
+      const planPrices = planPos.map((p) => {
+        const hist = p.asset_type === "gold" ? past?.gold
+          : past?.stocks?.[p.ticker] ? { price: past.stocks[p.ticker], date: past.stockDates?.[p.ticker] } : null;
+        const price = hist?.price || p.price;
+        return price ? { asset_type: p.asset_type, ticker: p.ticker, name: p.name, price, price_date: hist?.price ? hist.date : undefined } : null;
+      }).filter(Boolean);
       if (S.plansLedger && planPrices.length) {
         await sb.rpc("set_month_end_prices", { p_household: S.household.id, p_month: m, p_prices: planPrices });
       }

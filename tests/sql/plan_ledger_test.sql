@@ -95,12 +95,16 @@ select pg_temp.check((select count(*) from public.plan_holdings) = 2, 'member se
 select pg_temp.expect_error($q$select public.set_month_end_prices('11111111-1111-1111-1111-111111111111', pg_temp.m(1), '[]')$q$, 'Only an owner');
 select set_config('request.jwt.claim.sub','00000000-0000-0000-0000-00000000000a', false);
 select public.set_month_end_prices('11111111-1111-1111-1111-111111111111', pg_temp.m(1),
-  '[{"asset_type":"gold","ticker":"lm","name":"Antam","price":1100000}]');
+  format('[{"asset_type":"gold","ticker":"lm","name":"Antam","price":1100000,"price_date":"%s"}]', pg_temp.m(0) - 1)::jsonb);
 select pg_temp.check((select (p ->> 'assets_priced') = 'market' and (p ->> 'asset_value')::numeric = 2200000
                         and (p ->> 'saved')::numeric = 3200000 and (p ->> 'deposits')::numeric = 1000000
                       from jsonb_array_elements(public.period_statement('11111111-1111-1111-1111-111111111111', pg_temp.m(1)) -> 'plans') p
                       where p ->> 'plan_id' = 'aaaaaaaa-0000-0000-0000-000000000002'),
   'statement values holdings at the month-end price');
+select pg_temp.check((select (p ->> 'prices_on')::date = pg_temp.m(0) - 1
+                      from jsonb_array_elements(public.period_statement('11111111-1111-1111-1111-111111111111', pg_temp.m(1)) -> 'plans') p
+                      where p ->> 'plan_id' = 'aaaaaaaa-0000-0000-0000-000000000002'),
+  'statement says which day the prices are for');
 select pg_temp.check((select (p ->> 'asset_value')::numeric = 0
                       from jsonb_array_elements(public.period_statement('11111111-1111-1111-1111-111111111111', pg_temp.m(1)) -> 'plans') p
                       where p ->> 'plan_id' = 'aaaaaaaa-0000-0000-0000-000000000001'),
@@ -124,9 +128,23 @@ select pg_temp.check((select coalesce(sum(quantity), 0) from public.plan_holding
 select pg_temp.check((select quantity from public.plan_holdings where plan_id = 'aaaaaaaa-0000-0000-0000-000000000001') = 2,
   'the older plan keeps 2 g; the newer one lost its 2 g');
 select pg_temp.check((select count(*) from public.plan_ledger where entry_type = 'asset_out') = 2, 'two asset_out rows were written');
+select pg_temp.check((select count(*) from public.plan_ledger where note like 'Sale proceeds%') = 2
+                       and (select sum(amount) from public.plan_ledger where note like 'Sale proceeds%') = 5200000,
+  'the sale put 2 g x 1.300.000 into each plan''s cash (5.200.000 in total)');
+select pg_temp.check((select earmarked from public.account_earmarks('11111111-1111-1111-1111-111111111111')
+                      where account_id = '33333333-3333-3333-3333-333333333333') = 3000000 + 2600000,
+  'earmark on the plan account includes its 2.600.000 of sale proceeds');
 -- selling the rest deletes the lot; entries in the closed month keep reading fine (holding_id -> null)
 select public.sell_holding('11111111-1111-1111-1111-111111111111', 2, 1300000, '33333333-3333-3333-3333-333333333333', '55555555-0000-0000-0000-000000000001');
 select pg_temp.check((select count(*) from public.plan_holdings) = 0, 'nothing left assigned');
+select pg_temp.check((select sum(amount) from public.plan_ledger where note like 'Sale proceeds%') = 5200000 + 2600000,
+  'selling the last 2 g added 2.600.000 more');
+-- deleting a lot without selling it releases it but adds no cash
+select public.assign_holding_to_plan('aaaaaaaa-0000-0000-0000-000000000001','55555555-0000-0000-0000-000000000002',100,9500);
+delete from public.holdings where id = '55555555-0000-0000-0000-000000000002';
+select pg_temp.check((select count(*) from public.plan_holdings) = 0
+                       and (select sum(amount) from public.plan_ledger where note like 'Sale proceeds%') = 5200000 + 2600000,
+  'deleting a lot releases it from the plan without adding cash');
 select pg_temp.check((select holding_id is null and asset_name = 'Antam' from public.plan_ledger
                       where plan_id = 'aaaaaaaa-0000-0000-0000-000000000002' and entry_type = 'asset_in'),
   'closed-month asset row keeps its description after the lot is gone');
