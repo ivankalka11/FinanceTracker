@@ -17,7 +17,7 @@ A self-hosted personal finance system for an Indonesian household: Rupiah format
 - **Notifications**: plan milestones, falling behind, deadlines and month-close reminders, in an in-app bell with per-kind switches. Phone push delivery is not built yet.
 - **Households**: invite members by email; owners and members have different rights.
 
-The V1 dashboard and Telegram bot (Google Sheet backend) are described in [`setup.md`](setup.md). What is built, what is next and what is parked is in [`plan.md`](plan.md).
+The V1 dashboard and Telegram bot (Google Sheet backend) are described in [`docs/V1-setup.md`](docs/V1-setup.md). What is built, what is next and what is parked is in [`plan.md`](plan.md).
 
 ---
 
@@ -52,7 +52,7 @@ The PWA talks straight to Supabase with the signed-in user's session. Every tabl
 
 ## Quick start (V2)
 
-> Full steps, including the database, functions, hosting and every migration, are in [`setup.md`](setup.md).
+> Full steps, including the database, hosting and optional extras, are in [`setup.md`](setup.md).
 
 1. Create a free Supabase project and paste `supabase/setup_all.sql` into the SQL Editor once (it is every migration in one file).
 2. Copy `.env.example` to `.env` and fill in `SUPABASE_URL` and `SUPABASE_PUBLISHABLE_KEY`.
@@ -98,7 +98,7 @@ This repository is public. It must never hold a real secret.
 - **Safe in the browser:** `SUPABASE_URL` and `SUPABASE_PUBLISHABLE_KEY`. Row-level security protects the data, and sign-ups are turned off so people join by invite only.
 - **Server-side only:** `SUPABASE_SECRET_KEY` (bypasses security), `BOT_TOKEN`, `GEMINI_API_KEY`, `EMAS_API_KEY`, `ANTHROPIC_API_KEY`, `TELEGRAM_WEBHOOK_SECRET`. Edge Function keys are stored with `supabase secrets set`, not in files.
 - **V1 only:** `API_SECRET` ships to the browser inside `Dashboard/config.js`, so a V1 dashboard is only as private as its URL.
-- If a secret is ever committed, rotate it first (removing it from history does not undo the exposure); see the checklist in [`setup.md`](setup.md).
+- If a secret is ever committed, rotate it first (removing it from history does not undo the exposure); see the Security section of [`setup.md`](setup.md).
 
 ---
 

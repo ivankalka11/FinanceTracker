@@ -1,271 +1,102 @@
-# FinanceTracker — Setup Guide
+# FinanceTracker: setup guide
 
-V2 (Supabase + the `pwa/` app) is the current system; its steps start at **V2 phase 1** below. Sections before that describe **V1** (Google Sheet, Dashboard, Telegram bot), which is kept and still works.
+Run your own copy of FinanceTracker, a phone-first money app for a household. It includes everything: accounts, transactions, scanning receipts, portfolio (gold and stocks), monthly closing, savings plans and notifications.
 
-A self-hosted personal finance system for tracking income, expenses, investments, and balances across three savings accounts (Ivan, Mely, Bersama). Indonesian context: Rupiah formatting, QRIS-friendly, Antam gold buyback pricing.
-
-The whole system is driven by a shared **Google Sheets** backend exposed through a **Google Apps Script** web app. Two front-ends talk to that API: a **web dashboard** and a **Telegram bot**.
-
----
-
-## Secrets and GitHub: read this first
-
-This repository is **public** on GitHub, so it must never contain a real secret. A check of the working tree and the full history found no keys, tokens or passwords; only placeholders in `.env.example` and the docs. Keep it that way:
-
-- **Never committed (git-ignored):** `.env`, `Dashboard/config.js`, `pwa/config.js`, `pwa/models/`, `supabase/.temp/`, `.claude/settings*.json`. Only `.env.example`, with empty values, is tracked.
-- **Safe in the browser:** `SUPABASE_URL` and `SUPABASE_PUBLISHABLE_KEY` (they end up in `pwa/config.js`). Row-level security protects the data, and sign-ups are turned off.
-- **Server-side only, never in `pwa/` or `Dashboard/`:** `SUPABASE_SECRET_KEY`, `BOT_TOKEN`, `GEMINI_API_KEY`, `EMAS_API_KEY`, `ANTHROPIC_API_KEY`, `TELEGRAM_WEBHOOK_SECRET`. Edge Function keys go in with `supabase secrets set`.
-- **V1 only:** `API_SECRET` ships to the browser inside `Dashboard/config.js`; a V1 dashboard is only as private as its URL.
-- **Known history note:** the first commit contains a V1 Apps Script `/exec` URL. It is not a secret on its own (the `API_SECRET` guards it), but if you ever shared this repo widely, redeploy the Apps Script as a new deployment to get a new URL.
-- **Before each push,** run `git ls-files | grep -iE "\.env$|config\.js$"` (it should list nothing) and `git diff --cached` for anything that looks like a key.
-
-**If a secret is ever committed, rotate it first** (deleting it from history does not undo the exposure):
-
-- **Telegram BOT_TOKEN:** in @BotFather, send `/revoke` then `/token`.
-- **GEMINI_API_KEY:** delete and regenerate in Google AI Studio.
-- **EMAS_API_KEY:** regenerate in your Emas API ID dashboard.
-- **API_SECRET:** change it in `Code.gs`, update the root `.env`, re-run `python scripts/build_dashboard_config.py`.
-- **SUPABASE_SECRET_KEY:** create a new secret key in Supabase **Project Settings -> API keys** and delete the old one.
-
-### GitHub Actions
-
-The repository has no workflows. The old sample Jekyll workflow that published every tracked file to GitHub Pages was removed. If GitHub Pages is still switched on in the repository settings, turn it off.
-
----
-
-## Project structure
+You need about 30 minutes, a computer, and free accounts only. Your data lives in **your own** Supabase project.
 
 ```
-FinanceTracker/
-├── pwa/                    # V2 app: index.html, app.js, styles.css, sw.js, receipt-parser.js,
-│                           #   ocr-worker.js, manifest, icons, _headers
-│                           #   config.js and models/ are GENERATED (git-ignored)
-├── supabase/
-│   ├── setup_all.sql       # ALL migrations in one file, for a new project (generated)
-│   ├── migrations/         # run in order: init, ocr_usage, telegram, ledger_closing, plans, plan_ledger
-│   └── functions/          # prices, ocr, telegram (shelved), _shared
-├── scripts/                # build_supabase_setup (makes supabase/setup_all.sql), build_pwa_config, deploy_pwa, fetch_ocr_models, import_sheet_to_supabase, ...
-├── tests/                  # receipt_parser_test.js, sql/ (Docker)
-├── docs/                   # BRD.md, SRS.md
-├── Dashboard/              # V1 dashboard (config.js GENERATED, git-ignored)
-├── TelegramBot/            # V1 bot (bot.py, pricing.py, diagnose.py, ...)
-├── code.gs                 # V1 backend (Apps Script)
-└── .env.example            # copy to .env (git-ignored)
+Phone / browser (the app, hosted on Cloudflare Pages)  ──►  your Supabase project (database, sign-in, functions)
 ```
 
-> V1 note: the backend is `code.gs`; paste it into the Google Apps Script editor and deploy it for the V1 front-ends to work.
+## What you need
 
----
+| | Needed for | Cost |
+| --- | --- | --- |
+| [Supabase](https://supabase.com) account | the database and sign-in (required) | Free |
+| [Cloudflare](https://cloudflare.com) account | putting the app online (required for phone use) | Free |
+| [Node.js](https://nodejs.org) 18+ and [Python](https://python.org) 3.10+ | running the setup scripts | Free |
+| Emas API ID key (optional) | live Antam gold prices | Free |
+| Google Gemini key (optional) | "smart read" for hard-to-read receipts | Free tier |
 
-## Prerequisites
-
-- **Python 3.12.7** (matches `.python-version` / `runtime.txt`)
-- A **Google account** (for Sheets + Apps Script)
-- A **Telegram account** (to create the bot via @BotFather)
-- API keys: **Gemini** (free OCR) and **Emas API ID** (free gold prices)
-
----
-
-## Step 1 — Backend (Google Sheets + Apps Script)
-
-1. Create a new Google Sheet. This is your database. The system expects tabs for transactions, holdings, accounts, and realized P&L (the Apps Script reads/writes these).
-2. Open **Extensions → Apps Script** and paste in your `Code.gs`.
-3. In `Code.gs`, set the `SECRET` constant to a value you choose (this is your `API_SECRET`).
-4. **Deploy → New deployment → Web app**:
-   - Execute as: **Me**
-   - Who has access: **Anyone** (the secret is what protects it)
-5. Copy the deployed `/exec` Web App URL — you'll paste it into the root `.env` as `APPS_SCRIPT_URL` (shared by the bot and the dashboard).
-
-Whenever you change `Code.gs`, redeploy (or manage the deployment so the same URL serves the new code).
-
----
-
-## Step 2 — Get your API keys
-
-**Gemini (receipt/payslip OCR — free tier, ~1,500 req/day)**
-
-1. Go to Google AI Studio and create an API key.
-2. Put it in `.env` as `GEMINI_API_KEY`.
-
-**Emas API ID (official Antam gold buyback price — free)**
-
-1. Register at `https://emas.maulanar.my.id/register`.
-2. Copy your key from the dashboard.
-3. Put it in `.env` as `EMAS_API_KEY`.
-
-**Telegram bot token**
-
-1. Message @BotFather → `/newbot`, follow the prompts.
-2. Copy the token into `.env` as `BOT_TOKEN`.
-
----
-
-## Step 3 — Telegram bot
-
-From `TelegramBot/`:
+Get the code:
 
 ```bash
-cd TelegramBot
-
-# create + activate a virtual environment
-python3 -m venv venv
-source venv/bin/activate          # macOS/Linux
-# (Windows: venv\Scripts\activate)
-
-# install dependencies
-python3 -m pip install -r requirements.txt
+git clone https://github.com/ivankalka11/FinanceTracker
+cd FinanceTracker
 ```
 
-Copy `.env.example` to `.env` in the **project root** (one file for both the bot and the dashboard) and fill it with YOUR rotated values:
+---
+
+## 1. Create the database
+
+1. At supabase.com, create a free project (region closest to you, for example Singapore). Save the database password in a password manager.
+2. Open **SQL Editor**, paste the **whole** of [`supabase/setup_all.sql`](supabase/setup_all.sql), and click **Run**. This creates every table, security rule and function for all features in one go. Run it once, on a new empty project only.
+3. In **Authentication → Sign In / Providers**, keep **Email** on and turn **off** "Allow new users to sign up". People join by invitation only.
+4. In **Authentication → Users → Add user**, create your own user (your email and a password).
+5. In **Project Settings → API keys**, copy the **Project URL** and the **publishable key**. You need them in the next step.
+
+> Optional, for the daily plan and month-close reminders: turn on **Database → Extensions → pg_cron**, then run the last block of `supabase/migrations/20261118000000_plans.sql` again. Without it, the checks still run whenever someone opens the app.
+
+---
+
+## 2. Configure and run it locally
+
+```bash
+cp .env.example .env        # Windows: copy .env.example .env
+```
+
+Open `.env` and fill in only these two lines:
 
 ```env
-BOT_TOKEN=your_telegram_bot_token
-APPS_SCRIPT_URL=https://script.google.com/macros/s/XXXX/exec
-API_SECRET=your_chosen_secret          # must match SECRET in Code.gs
-
-# optional: lock the bot to only your Telegram user id (leave blank = open)
-ALLOWED_TELEGRAM_ID=
-
-# OCR
-OCR_PROVIDER=gemini                    # "gemini" (free) or "anthropic" (paid)
-GEMINI_API_KEY=your_gemini_key
-GEMINI_MODEL=gemini-2.5-flash
-ANTHROPIC_API_KEY=                     # only if OCR_PROVIDER=anthropic
-
-# gold pricing
-EMAS_API_KEY=your_emas_key
+SUPABASE_URL=https://YOUR_PROJECT_ID.supabase.co
+SUPABASE_PUBLISHABLE_KEY=your publishable key
 ```
 
-`bot.py` loads the root `.env` automatically via `TelegramBot/env_loader.py` (no extra package). Variables already set in the real environment (e.g. on a host) take precedence.
-
-For the dashboard, generate its config from the same file:
-
-```bash
-python scripts/build_dashboard_config.py
-```
-
-Run it:
-
-```bash
-python3 bot.py
-```
-
-You should see `Bot is running (long polling)...`. Message your bot `/start` to confirm.
-
-**Sanity-check gold pricing** (optional):
-
-```bash
-python3 diagnose.py
-```
-
-This prints whether `EMAS_API_KEY` is set and what the buyback endpoint returns.
-
----
-
-## Step 4 — Dashboard
-
-The dashboard reads `APPS_SCRIPT_URL` and `API_SECRET` from the root `.env`. Generate its config (re-run whenever `.env` changes):
-
-```bash
-python scripts/build_dashboard_config.py
-```
-
-This writes `Dashboard/config.js` with only those two values; bot-only keys never reach the browser.
-
-To run locally, just open `dashboard.html` in a browser, or serve the folder:
-
-```bash
-cd Dashboard
-python3 -m http.server 8000
-# then visit http://localhost:8000/dashboard.html
-```
-
-The dashboard does full CRUD on transactions, investments, account balances, and transfers, with an expenses-by-category chart (Chart.js) and a filterable/sortable/paginated table.
-
----
-
-## Bot command reference
-
-```
-/add <type> <amount> <description> [category]   add a transaction (type = income/expense/invest)
-/payslip                                        next photo → net take-home logged as income
-(send a receipt photo)                          OCR → logged as expense, asks which account
-
-/portfolio                                      live P&L on gold + stocks
-/sell <ticker> <qty> <price> <account>          sell a holding, records realized P&L
-/realized                                       realized profit/loss from past sales
-
-/accounts                                       balance per account (Ivan/Mely/Bersama)
-/transfer <from> <to> <amount> [note]           move funds between accounts
-/summary                                        this month's income/expense/balance
-/recent                                         last 5 transactions
-```
-
----
-
-## How the pieces talk
-
-```
-Telegram Bot ─┐
-              ├──► Apps Script Web App (/exec, guarded by API_SECRET) ──► Google Sheet
-Dashboard ────┘
-```
-
-- **Transactions** flow in from the bot or the dashboard; both POST JSON as `text/plain` (this avoids a CORS preflight that Apps Script doesn't answer).
-- **Gold** is standardized as `ticker: "LM"` with the brand (e.g. "Antam") in `name`, unifying gold and stocks under one holdings model. Buyback price comes from Emas API ID (official Antam, updated daily ~08:30 WIB).
-- **Stocks** are priced via Yahoo Finance (`.JK` suffix added automatically), ~15 min delayed.
-- **Transfers** write two linked rows and are excluded from income/expense totals.
-- Live price fetching stays **server-side** (Apps Script / bot), never in the browser.
-
----
-
-## V2 phase 1 — Supabase database (in progress)
-
-V2 moves the default database to Supabase and keeps the Google Sheet as a second source. Phase 1 adds the database only (one `setup_all.sql` creates everything); the bot and dashboard still use the Sheet until phase 2.
-
-1. **Create the project.** At supabase.com create a free project (region: Singapore). Save the database password in a password manager.
-2. **Create the whole database in one step (new, empty project).** Open **SQL Editor**, paste all of `supabase/setup_all.sql` (about 108 KB, every migration in order), and run it once. It creates every table, security rule and function for V2.1 to V2.6, so you can skip the per-feature migration steps below (the Telegram part is only used if you turn the shelved bot on). Run it on a **new project only**: running it twice, or on a project that already has these tables, fails. A project that is already set up only needs the individual migration files it has not run yet. After adding or changing a migration, rebuild the file with `python scripts/build_supabase_setup.py`. (With the Supabase CLI instead: `supabase link`, then `supabase db push`.)
-3. **Lock down sign-in.** In **Authentication → Sign In / Providers**, turn off "Allow new users to sign up" and keep Email enabled (magic link). New people join by invite only.
-4. **Add yourself.** In **Authentication → Users → Add user**, create your own user with your email.
-5. **Fill in `.env`.** From **Project Settings → API keys**, copy the project URL, the publishable key and the secret key into `SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY` and `SUPABASE_SECRET_KEY`. The secret key bypasses all security rules: it is for server-side scripts only and must never reach the dashboard.
-6. **Import the Sheet.** Activate the bot's virtual environment first (the script needs `requests`). Preview, then run for real:
-
-```bash
-python scripts/import_sheet_to_supabase.py --owner-email you@example.com --household "Keluarga" --dry-run
-python scripts/import_sheet_to_supabase.py --owner-email you@example.com --household "Keluarga"
-```
-
-The import creates the household, one account per account name found in the Sheet, the categories, and all transactions, holdings and realized P&L. It ends with a per-account balance comparison between the Sheet and Supabase. It is safe to re-run: rows are matched on their V1 id.
-
-What the migration sets up: tables `households`, `members`, `accounts`, `categories`, `transactions`, `holdings`, `sales`, `receipts`, `telegram_links`; a rule on every table that only household members can read or write its rows; the `account_balances` view; and the functions `create_household`, `add_member_by_email`, `add_transfer` and `sell_holding`.
-
----
-
-## V2 phase 2 — the PWA (in progress)
-
-The new phone-first app lives in `pwa/` and talks straight to Supabase. It is plain HTML, CSS and JavaScript with no build step. The V1 `Dashboard/` is untouched and still uses the Sheet.
-
-**Run it locally**
+Then:
 
 ```bash
 python scripts/build_pwa_config.py
 python -m http.server 5173 --directory pwa
 ```
 
-Then open `http://localhost:5173`. The first command writes `pwa/config.js` (Supabase URL and publishable key only) and the PNG app icons. Re-run it when those values change. Sign in with the user you created in Supabase.
+Open `http://localhost:5173`, sign in with the user from step 1, and the app asks you to create your household and accounts. Add a transaction to check that it works.
 
-**What it does**
+The publishable key is designed to be public. Never put `SUPABASE_SECRET_KEY` anywhere near the app.
 
-- Home: total balance, your accounts, this month's income/expense/invested, recent transactions.
-- Add income, expense or invest entries; transfer between accounts; delete entries.
-- Overview: period totals, a 6-month income and expense chart, expenses by category.
-- Portfolio: positions with average cost, add a holding, sell (oldest lots first), realized P&L.
-- Settings: add, rename, archive accounts and set opening balances; manage categories; add a household member; sign out.
-- Installable (Add to Home Screen), opens offline with the last loaded data, and queues new entries made offline until the connection returns.
+---
 
-**Live prices (optional for now)**
+## 3. Put it online (Cloudflare Pages)
 
-Until the `prices` function is deployed, holdings show at cost. To turn on live gold and stock prices, deploy `supabase/functions/prices/index.ts`:
+1. Log in to Cloudflare once (a browser window opens):
+
+```bash
+npx wrangler login
+```
+
+2. In `.env`, set a project name of your own (lowercase letters, numbers and dashes). It becomes your address `https://<name>.pages.dev`:
+
+```env
+CLOUDFLARE_PAGES_PROJECT=my-finance
+```
+
+3. Upload:
+
+```bash
+python scripts/deploy_pwa.py
+```
+
+The script builds the config, downloads the on-device scanning models, and uploads the `pwa` folder. It prints the final address (Cloudflare adds a suffix if the name is taken).
+
+4. In Supabase, open **Authentication → URL Configuration** and set **Site URL** to that address (also add it under **Redirect URLs**). This makes the "Email me a sign-in link" button work; password sign-in works without it.
+5. On your phone, open the address, sign in, and choose **Add to Home Screen**.
+
+For every later release, run `python scripts/deploy_pwa.py` again. If the main address shows a 404 after an upload, the project's production branch is not `main`: set `CLOUDFLARE_PAGES_BRANCH` in `.env` to that branch, or change **Production branch** in the Cloudflare project settings, then upload again.
+
+---
+
+## 4. Optional extras
+
+**Live gold and stock prices.** Without this, holdings show at cost.
 
 ```bash
 npx supabase login
@@ -274,173 +105,54 @@ npx supabase secrets set EMAS_API_KEY=your_emas_key
 npx supabase functions deploy prices
 ```
 
-**Sign-in by email link**
+Gold uses the official Antam buyback price (Emas API ID); stocks use Yahoo Finance with `.JK` added for IDX, about 15 minutes delayed.
 
-Password sign-in works out of the box. For the "Email me a sign-in link" button, add the app's address under **Authentication → URL Configuration** (Site URL and Redirect URLs), for example `http://localhost:5173` and later your hosted address.
-
-**Hosting (Cloudflare Pages)**
-
-The simplest route uploads the `pwa` folder straight from your computer. No GitHub push is needed, and you need a free Cloudflare account.
-
-1. Make sure `pwa/config.js` is current: `python scripts/build_pwa_config.py`.
-2. Log in once (a browser window opens):
+**Smart read for scanning.** Scanning works on the device with no key (PaddleOCR; the photo never leaves your phone). If a photo reads badly, "Try smart read" sends it to Google Gemini. To turn that on:
 
 ```bash
-npx wrangler login
-```
-
-3. Pick your own project name and put it in `.env` as `CLOUDFLARE_PAGES_PROJECT=` (lowercase letters, numbers and dashes). It becomes the address `https://<name>.pages.dev`.
-4. Upload. The first run asks to create the project; answer yes, and when it asks for the production branch, type `main`. If the name is already taken on pages.dev, Cloudflare adds a suffix to the address (for example `<name>-4ud.pages.dev`); the upload prints the real one.
-
-```bash
-python scripts/deploy_pwa.py
-```
-
-The script rebuilds `pwa/config.js` and then runs `npx wrangler pages deploy pwa --project-name <name> --branch main --commit-dirty=true` for you.
-
-5. In Supabase, open **Authentication → URL Configuration** and set **Site URL** to the new address (also add it under Redirect URLs). Password sign-in works without this; the email sign-in link needs it.
-6. On your phone, open the address, sign in, then use **Add to Home Screen**.
-
-If the main address shows "404" after an upload, the upload went to a preview because the project's production branch is not the branch the script used. Wrangler-created projects use the git branch you were on when the project was first created. Either set `CLOUDFLARE_PAGES_BRANCH=` in `.env` to that branch name, or change **Production branch** to `main` in the Cloudflare dashboard (**Workers & Pages -> your project -> Settings**), then upload again.
-
-For every later release, bump `VERSION` in `pwa/sw.js` and run the step 4 command again.
-
-`pwa/_headers` tells Cloudflare to send security headers: a content security policy that only allows the app's own files, the two pinned libraries, Google Fonts and Supabase; no framing by other sites; no search-engine indexing. The address is public, so anyone can open the sign-in page, but data is only returned to signed-in household members.
-
-Alternative (auto-deploy on push): connect the GitHub repo in Cloudflare Pages, set the build command to `python scripts/build_pwa_config.py`, the output directory to `pwa`, and add `SUPABASE_URL` and `SUPABASE_PUBLISHABLE_KEY` as environment variables.
-
----
-
-## V2 phase 3 - scanning in the app (in progress)
-
-The centre button in the bottom bar opens **Scan**. Pick Receipt, Payslip or History, take a photo or choose one, and the app shows a "Check the details" sheet filled in from the photo. Nothing is saved until you tap Save. A History screenshot is reviewed one row at a time (Save or Skip). Manual entry stays on the Home **Add** button.
-
-**How a photo is read**
-
-1. **On the device (default).** The text is read by PaddleOCR (open source, PP-OCRv6 "tiny" models) running inside the app. No key, no server, no daily limit, and the photo is not uploaded. After the first scan it also works offline.
-2. **Rules turn the text into fields** (`pwa/receipt-parser.js`): the total line, the date, the shop name. The category comes from your own history first (the same shop last time), then from a small keyword list.
-3. **Smart read (optional).** If the result is wrong, "Try smart read" sends that photo to the `ocr` Supabase function, which asks Google Gemini. This is the only path that uploads the photo.
-
-**Set up on-device reading (once per computer)**
-
-```bash
-python scripts/fetch_ocr_models.py
-```
-
-This downloads three model files (about 6.4 MB) into `pwa/models/`. The folder is git-ignored; `scripts/deploy_pwa.py` runs this step for you before each upload.
-
-**Set up smart read (optional)**
-
-1. In the Supabase dashboard, open **SQL Editor**, paste the contents of `supabase/migrations/20261115000000_ocr_usage.sql`, and run it. This adds the daily limit (30 smart reads per user per day; change `v_limit` in that file to adjust).
-2. Deploy the function from the project folder:
-
-```bash
-npx supabase login
-npx supabase link --project-ref YOUR_PROJECT_ID
 npx supabase secrets set GEMINI_API_KEY=your_gemini_key
 npx supabase functions deploy ocr
 ```
 
-Without these, on-device scanning still works and "Try smart read" reports that it is not set up.
+It is limited to 30 smart reads per user per day (change `v_limit` in the `use_ocr_scan` function to adjust). Google's free tier may use submitted images to improve its products, so this applies to smart read only.
 
-**Good to know**
+**Bring your data from the old Google Sheet version.** Add `SUPABASE_SECRET_KEY` and `APPS_SCRIPT_URL` / `API_SECRET` to `.env`, then preview and run (safe to repeat):
 
-- On-device rules are best-effort. Clear printed receipts work well; crumpled or faded receipts, unusual layouts, and long history screenshots are where smart read helps.
-- The first scan downloads the reading engine (a few MB from jsDelivr) and is slower; later scans take a couple of seconds.
-- A phone camera only opens on an HTTPS address, so host the app (see Cloudflare Pages above) before testing on a phone. On the computer, "Choose from gallery" works with image files.
-- Gemini's free tier may use submitted images to improve Google's products. That applies to smart read only.
-- Check the rules after changing them: `node tests/receipt_parser_test.js`.
+```bash
+python scripts/import_sheet_to_supabase.py --owner-email you@example.com --household "Keluarga" --dry-run
+python scripts/import_sheet_to_supabase.py --owner-email you@example.com --household "Keluarga"
+```
+
+Run this from your own computer only; the secret key bypasses all security rules.
 
 ---
 
-## V2.4 - monthly ledger closing
+## 5. Using the app
 
-Closing a month saves its statement and locks every entry dated in it or earlier. Only an owner closes or reopens a month, and only by hand.
-
-1. In the Supabase dashboard, open **SQL Editor**, paste the contents of `supabase/migrations/20261117000000_ledger_closing.sql`, and run it once. Until then, Settings → Monthly statements says "Not set up yet" and nothing is locked.
-2. Reload the app. When a month has ended, owners see a **Close <month>** card on Home.
-3. To close: open the month, check the figures and the checklist, enter each account's bank balance on the last day (explain any difference, or fix the entries first), then tap **Close** twice.
-4. The first close can be any finished month; everything before it is locked with it. After that, months close in order.
-5. To fix a closed month: open it, give a reason and tap **Reopen**. Only the latest closed month can be reopened. Closing it again saves a new version; the old one stays in the history.
-6. A closed statement can be printed (or saved as PDF from the print dialog) and exported as CSV.
-
-## V2.5 - plans and notifications
-
-Plans are savings goals (target amount and date) that you put money into over time. The database, the Plans screen and the notification bell are done; phone push (Web Push) comes next.
-
-**Notifications:** the bell on Home shows how many are unread. Tap it for the list; tapping one marks it read and opens its plan or monthly statement. **Mark all read** and **Clear read** tidy the list. New notifications pop up while the app is open (through Supabase Realtime, which the plans migration turns on for the `notifications` table); otherwise they appear the next time the app opens. **Settings → Configuration → Notifications** has a switch per kind: plan milestones, falling behind, deadlines, the monthly reminder, and (owners only) the month-close reminder.
-
-**Using plans:** Home shows a **Plans** card with the three nearest active plans; **See all** (or **+ Start a plan**) opens the Plans screen. Tap a plan to see its progress, a chart of saved money against the plan line, and the money added. **Add money** records money set aside; it can point at an existing income or transfer-in entry so the two are linked. From the same sheet you can edit, pause, resume, mark achieved or cancel a plan; **Delete plan** appears only while the plan has no money in it. Closed monthly statements list each plan's money for that month.
-
-1. Run `20261117000000_ledger_closing.sql` first if you have not. Then, in **SQL Editor**, paste the contents of `supabase/migrations/20261118000000_plans.sql` and run it once.
-2. What it sets up: tables `plans`, `plan_contributions`, `notifications`, `notification_prefs` and `push_subscriptions`; a `plans` section in every new closing statement; and the functions `check_notifications` (the app calls it when it opens) and `save_push_subscription`.
-3. Notifications are created by the database: milestones (25/50/75/100%) as soon as money is added; "behind", 30 and 7 days to go, overdue, the monthly reminder from the 25th, and the month-close reminders when the daily check runs.
-4. The daily check runs at 07:00 and 19:00 WIB through `pg_cron`. If the run prints "pg_cron is not set up", turn on **Database → Extensions → pg_cron** and run the file's last block again; until then the checks still run whenever the app opens.
-5. Owners get every kind of notification unless they turn it off; other members get only the kinds they turn on. Month-close reminders go to owners only.
-6. A plan that has ledger entries or assigned holdings cannot be deleted, only cancelled. Money added to a plan follows the month lock, like transactions.
-
-## V2.6 - plan ledger, gold and stocks in plans
-
-Plans become real ledgers. A plan is a **set-aside on an account**, not an account, so balances still match the bank.
-
-1. Run the earlier migrations first, then in **SQL Editor** paste `supabase/migrations/20261119000000_plan_ledger.sql` and run it once. Until then the app falls back to deposit-only plans.
-2. What it sets up: the `plan_ledger` table (replaces `plan_contributions`, which stays as a view), `plan_holdings`, `month_end_prices`, the `plan_ledger_running` view, and the functions `assign_holding_to_plan`, `unassign_holding_from_plan`, `account_earmarks` and `set_month_end_prices`.
-3. In a plan you can **Add money**, **Take out** money (never below zero; this records the movement in the plan only and moves no money between accounts) and **Assign gold or stocks** you already hold. Selling a lot releases it from its plans automatically; the sale proceeds are not added to plan cash.
-4. Account cards show **Set aside** and **Free to spend**. Saving an expense or investment that takes an account below its set-aside shows a warning (it does not block).
-5. Holdings count in a plan at the live price when the `prices` function is deployed, otherwise at cost. The database itself only knows cost, so notification checks use cost.
-6. When an owner closes a month, the app first saves today's market prices (`set_month_end_prices`) so the statement's plan section is reproducible. It says whether assets were valued at market price or at cost.
-7. Check the database rules with `sh tests/sql/run.sh` (needs Docker).
-
-## V2 phase 4 - the Telegram bot on Supabase (shelved)
-
-> Not in use. Scanning in the app covers the same need, so this is parked: the code is in the repo but nothing is deployed, and the "Telegram bot" row in Settings is hidden unless `TELEGRAM_BOT: true` is added to `pwa/config.js`. The steps below are kept in case it is wanted later.
-
-The bot now exists as a Supabase function, `telegram`. Telegram calls it for every message (a "webhook"), so no computer has to stay on and no bot hosting is needed. It reads and writes Supabase, uses your own accounts and categories, and shares the same photo reader and daily scan limit as the app.
-
-**Turn it on (once)**
-
-1. In the Supabase dashboard, open **SQL Editor**, paste the contents of `supabase/migrations/20261116000000_telegram.sql`, and run it.
-2. From the project folder (after `npx supabase login` and `npx supabase link`), run:
-
-```bash
-python scripts/setup_telegram_webhook.py
-```
-
-The script creates `TELEGRAM_WEBHOOK_SECRET` in `.env` if it is missing, stores the bot token, that secret, and the Gemini and Emas keys as Supabase secrets, deploys the function, and points Telegram at it. It prints no secret values.
-
-3. The `ocr` and `prices` functions now share code with the bot. Redeploy them so all three run the same version:
-
-```bash
-npx supabase functions deploy ocr
-```
-
-```bash
-npx supabase functions deploy prices
-```
-
-4. In the app, open **Settings -> Link Telegram**. It shows a message such as `/link ABCD1234`. Send that to your bot within 10 minutes. Each household member links their own Telegram account this way.
-
-**Using it**
-
-- Send a receipt photo, or `/add expense 85000 lunch at warung`. The bot asks for the category and the account with buttons, then saves.
-- `/payslip` or `/history`, then a photo. History rows are reviewed one card at a time (Keep, Rename, Skip).
-- `/transfer`, `/sell`, `/portfolio`, `/realized`, `/accounts`, `/summary`, `/recent` work as before. `/cancel` drops whatever is in progress; `/unlink` disconnects your Telegram account.
-
-**Good to know**
-
-- Once the webhook is on, the old Python bot (`TelegramBot/bot.py`) stops receiving messages; a bot can use only one of the two. To go back: `python scripts/setup_telegram_webhook.py --off`. To see the current state: `--status`.
-- The bot answers only people who have linked from the app, and only in private chats. Everyone else gets a "this bot is private" reply.
-- Entries are saved with source `telegram` (typed) or `telegram-ocr` (from a photo).
+- **Home:** total balance, your accounts, this month's totals, plans, recent transactions, and the notification bell.
+- **Add:** income, expense or invest entries; transfers between accounts (not counted as income or expense). Works offline and syncs when the connection returns.
+- **Scan (centre button):** pick Receipt, Payslip or History, take a photo, check the details, then Save. Nothing is saved until you tap Save, and photos are not stored.
+- **Overview:** period totals, a 6-month chart, expenses by category.
+- **Portfolio:** add gold or stocks, see live profit and loss, sell (oldest lots first) and see realized P&L.
+- **Plans:** savings goals with a target amount and date. A plan is a set-aside on a real account, with its own ledger (add money, take money out, adjust). Gold and stocks you hold can be assigned to a plan. Each account shows balance, set aside and free to spend.
+- **Monthly closing (owners):** when a month ends, check the figures, enter each account's bank balance, and close it. This saves the statement (printable, CSV export) and locks entries dated in or before that month. An owner can reopen the latest closed month with a reason.
+- **Notifications:** plan milestones (25/50/75/100%), falling behind, deadlines, monthly reminders and month-close reminders. Switch each kind on or off in **Settings → Configuration → Notifications**. Phone push is not built yet; they appear in the in-app bell.
+- **Settings:** accounts (add, rename, archive, opening balances), categories, household members (add by email, they must exist as a Supabase user first), sign out.
 
 ---
 
-## Deployment notes
+## Security
 
-- **V2 app:** Cloudflare Pages, uploaded with `python scripts/deploy_pwa.py` (see phase 2). No GitHub push or GitHub Pages is involved. The address is public, but data is only returned to signed-in household members.
-- **V1 bot and dashboard:** hosting is off the roadmap. If you ever host the V1 dashboard on a public site, remember `API_SECRET` is readable there.
+- The repository is public and must never hold a secret. `.env`, `pwa/config.js` and `pwa/models/` are git-ignored; only `.env.example` (empty values) is tracked.
+- Safe in the browser: `SUPABASE_URL` and `SUPABASE_PUBLISHABLE_KEY`. Row-level security means data is only returned to signed-in members of the household, and sign-ups are off.
+- Server-side only: `SUPABASE_SECRET_KEY`, `GEMINI_API_KEY`, `EMAS_API_KEY`. Function keys go in with `supabase secrets set`, not in files.
+- If a key is ever exposed, rotate it first: create a new Supabase secret key and delete the old one, regenerate the Gemini and Emas keys.
+- The app address is public, so anyone can open the sign-in page, but only people you added can sign in.
 
----
+## Updating and troubleshooting
 
-## Known limitation (V1)
-
-The V1 Telegram bot only receives messages while no Telegram webhook is set (it uses polling). The shelved V2 webhook (phase 4) replaces it if you turn that on.
+- **New version of the app:** `git pull`, then `python scripts/deploy_pwa.py`. New database changes arrive as files in `supabase/migrations/`; run any you have not run yet in the SQL Editor (and rebuild `setup_all.sql` with `python scripts/build_supabase_setup.py` if you change one).
+- **Check the database rules:** `sh tests/sql/run.sh` (needs Docker). Check the scanner: `node tests/receipt_parser_test.js`.
+- **Phone camera does not open:** it only works on an HTTPS address, so use the hosted address, not `localhost`, on the phone.
+- **"Not set up yet" for plans or statements:** the database script was not run, or ran on a different project than `SUPABASE_URL` points to.
+- **Old setup (Google Sheet, V1 dashboard, Telegram bot):** [`docs/V1-setup.md`](docs/V1-setup.md). Not needed for the current app. What is built and what is next: [`plan.md`](plan.md).
