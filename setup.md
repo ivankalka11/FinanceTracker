@@ -41,9 +41,10 @@ FinanceTracker/
 │                           #   ocr-worker.js, manifest, icons, _headers
 │                           #   config.js and models/ are GENERATED (git-ignored)
 ├── supabase/
+│   ├── setup_all.sql       # ALL migrations in one file, for a new project (generated)
 │   ├── migrations/         # run in order: init, ocr_usage, telegram, ledger_closing, plans, plan_ledger
 │   └── functions/          # prices, ocr, telegram (shelved), _shared
-├── scripts/                # build_pwa_config, deploy_pwa, fetch_ocr_models, import_sheet_to_supabase, ...
+├── scripts/                # build_supabase_setup (makes supabase/setup_all.sql), build_pwa_config, deploy_pwa, fetch_ocr_models, import_sheet_to_supabase, ...
 ├── tests/                  # receipt_parser_test.js, sql/ (Docker)
 ├── docs/                   # BRD.md, SRS.md
 ├── Dashboard/              # V1 dashboard (config.js GENERATED, git-ignored)
@@ -220,10 +221,10 @@ Dashboard ────┘
 
 ## V2 phase 1 — Supabase database (in progress)
 
-V2 moves the default database to Supabase and keeps the Google Sheet as a second source. Phase 1 adds the database only; the bot and dashboard still use the Sheet until phase 2.
+V2 moves the default database to Supabase and keeps the Google Sheet as a second source. Phase 1 adds the database only (one `setup_all.sql` creates everything); the bot and dashboard still use the Sheet until phase 2.
 
 1. **Create the project.** At supabase.com create a free project (region: Singapore). Save the database password in a password manager.
-2. **Create the tables and security rules.** Open **SQL Editor**, paste all of `supabase/migrations/20261114000000_init.sql`, and run it once. (With the Supabase CLI: `supabase link`, then `supabase db push`.)
+2. **Create the whole database in one step (new, empty project).** Open **SQL Editor**, paste all of `supabase/setup_all.sql` (about 108 KB, every migration in order), and run it once. It creates every table, security rule and function for V2.1 to V2.6, so you can skip the per-feature migration steps below (the Telegram part is only used if you turn the shelved bot on). Run it on a **new project only**: running it twice, or on a project that already has these tables, fails. A project that is already set up only needs the individual migration files it has not run yet. After adding or changing a migration, rebuild the file with `python scripts/build_supabase_setup.py`. (With the Supabase CLI instead: `supabase link`, then `supabase db push`.)
 3. **Lock down sign-in.** In **Authentication → Sign In / Providers**, turn off "Allow new users to sign up" and keep Email enabled (magic link). New people join by invite only.
 4. **Add yourself.** In **Authentication → Users → Add user**, create your own user with your email.
 5. **Fill in `.env`.** From **Project Settings → API keys**, copy the project URL, the publishable key and the secret key into `SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY` and `SUPABASE_SECRET_KEY`. The secret key bypasses all security rules: it is for server-side scripts only and must never reach the dashboard.

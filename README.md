@@ -54,7 +54,7 @@ The PWA talks straight to Supabase with the signed-in user's session. Every tabl
 
 > Full steps, including the database, functions, hosting and every migration, are in [`setup.md`](setup.md).
 
-1. Create a free Supabase project and run the files in `supabase/migrations/` in order (SQL Editor).
+1. Create a free Supabase project and paste `supabase/setup_all.sql` into the SQL Editor once (it is every migration in one file).
 2. Copy `.env.example` to `.env` and fill in `SUPABASE_URL` and `SUPABASE_PUBLISHABLE_KEY`.
 3. Run locally:
 
