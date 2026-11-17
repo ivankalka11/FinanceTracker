@@ -20,7 +20,7 @@ sys.path.insert(0, str(ROOT / "TelegramBot"))
 import env_loader  # noqa: E402,F401  (loads the root .env; real env vars win)
 
 KEYS = ("SUPABASE_URL", "SUPABASE_PUBLISHABLE_KEY")
-BG, ORANGE = (0x0F, 0x0F, 0x11), (0xF2, 0x6A, 0x2E)
+BG, ACCENT = (0x0F, 0x0F, 0x11), (0xEE, 0x4D, 0x8C)
 # three rising bars on a 512 grid, kept inside the maskable safe zone
 BARS = ((156, 276, 212, 356), (228, 216, 284, 356), (300, 156, 356, 356))
 
@@ -34,7 +34,7 @@ def write_png(path: Path, size: int) -> None:
         rows.append(0)  # filter: none
         for x in range(size):
             inside = any(x0 <= x < x1 and y0 <= y < y1 for x0, y0, x1, y1 in boxes)
-            rows.extend(ORANGE if inside else BG)
+            rows.extend(ACCENT if inside else BG)
 
     def chunk(kind: bytes, data: bytes) -> bytes:
         body = kind + data

@@ -72,6 +72,29 @@
     lock: '<rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 018 0v3"/>',
     next: '<path d="M9 5l7 7-7 7"/>',
     bell: '<path d="M6 16V11a6 6 0 0112 0v5l1.5 2h-15z"/><path d="M10 20.5a2 2 0 004 0"/>',
+    // transaction row badges
+    arrowIn: '<path d="M17 7L7 17M7 9v8h8"/>',
+    arrowOut: '<path d="M7 17L17 7M9 7h8v8"/>',
+    cart: '<path d="M4 5h2l2 10h9l2-7H7"/><circle cx="10" cy="19" r="1.2"/><circle cx="17" cy="19" r="1.2"/>',
+    food: '<path d="M7 4v6a2 2 0 002 2v8M11 4v6M7 8h4M17 4c-2 1-3 3-3 6 0 2 1 3 3 3v7"/>',
+    fuel: '<path d="M5 20V5a1 1 0 011-1h7a1 1 0 011 1v15M4 20h11M7 8h5M14 9h2.5a1.5 1.5 0 011.5 1.5V16a1.5 1.5 0 003 0V9l-3-3"/>',
+    car: '<path d="M5 17v-5l2-5h10l2 5v5M5 17h14M5 17v2M19 17v2"/><circle cx="8.5" cy="13.5" r=".8"/><circle cx="15.5" cy="13.5" r=".8"/>',
+    bag: '<path d="M5 8h14l-1 12H6z"/><path d="M9 8V7a3 3 0 016 0v1"/>',
+    bolt: '<path d="M13 3L5 14h6l-1 7 8-11h-6z"/>',
+    heart: '<path d="M12 20s-7-4.5-7-10a4 4 0 017-2.5A4 4 0 0119 10c0 5.5-7 10-7 10z"/>',
+    receipt: '<path d="M6 3h12v18l-3-2-3 2-3-2-3 2z"/><path d="M9 8h6M9 12h6"/>',
+    gift: '<rect x="4" y="9" width="16" height="11" rx="1.5"/><path d="M12 9v11M4 13h16M12 9c-3 0-4-4-1-4 2 0 1 4 1 4zm0 0c3 0 4-4 1-4-2 0-1 4-1 4z"/>',
+    wallet: '<path d="M4 7h14a2 2 0 012 2v9a2 2 0 01-2 2H6a2 2 0 01-2-2z"/><path d="M4 7l11-3v3M16 14h2"/>',
+    play: '<rect x="4" y="5" width="16" height="14" rx="3"/><path d="M10 9.5v5l4.5-2.5z"/>',
+    book: '<path d="M5 5a2 2 0 012-2h12v15H7a2 2 0 00-2 2zM5 19a2 2 0 002 2h12"/>',
+    briefcase: '<rect x="4" y="8" width="16" height="11" rx="2"/><path d="M9 8V6a1 1 0 011-1h4a1 1 0 011 1v2M4 13h16"/>',
+    gold: '<path d="M3 17l2.5-6h13L21 17z"/><path d="M8 11l1.5-4h5L16 11"/>',
+    // plan actions
+    pencil: '<path d="M4 20l1-4L16 5l3 3L8 19z"/><path d="M14 7l3 3"/>',
+    pause: '<path d="M9 5v14M15 5v14"/>',
+    check: '<path d="M5 12.5l4.5 4.5L19 7.5"/>',
+    resume: '<path d="M8 5l11 7-11 7z"/>',
+    trash: '<path d="M5 7h14M9 7V5h6v2M7 7l1 13h8l1-13"/>',
   };
   const icon = (name) => `<svg class="i" viewBox="0 0 24 24" aria-hidden="true">${ICON[name]}</svg>`;
 
@@ -590,16 +613,53 @@
   }
 
   // ------------------------------------------------------------ views: main tabs
+  // Badge for a transaction row: an icon by type, then by category / description keywords.
+  // The tint shows direction: green = money in, pink = transfer or loan, neutral = spending.
+  const KEYWORD_ICONS = [
+    [/bensin|bbm|fuel|pertalite|pertamax|solar|spbu/i, "fuel"],
+    [/transport|ojek|grab|gojek|taksi|taxi|kereta|bus\b|tol\b|parkir|mobil|motor/i, "car"],
+    [/makan|food|resto|kafe|cafe|kopi|coffee|minum|jajan|bakso|nasi|warung|snack/i, "food"],
+    [/belanja|shop|market|mart\b|toko|tokopedia|shopee|lazada|baju|pakaian|grocer/i, "cart"],
+    [/listrik|pln|pdam|air\b|internet|wifi|tagihan|bill|pulsa|token|cicilan|sewa|kost|rent|utilit/i, "bolt"],
+    [/sehat|health|dokter|obat|apotek|klinik|rumah sakit/i, "heart"],
+    [/hiburan|netflix|spotify|game|film|bioskop|liburan|wisata|entertain/i, "play"],
+    [/sekolah|kuliah|pendidikan|kursus|buku\b|edu/i, "book"],
+    [/hadiah|gift|donasi|zakat|sedekah|amal|charity/i, "gift"],
+    [/gaji|salary|payslip|bonus|thr\b/i, "briefcase"],
+  ];
+  function txBadge(t, cat) {
+    if (t.type === "transfer-in" || t.type === "loan-in") return { name: "arrowIn", tone: "xfer" };
+    if (t.type === "transfer-out" || t.type === "loan-out") return { name: "arrowOut", tone: "xfer" };
+    const text = `${cat} ${t.description || ""}`;
+    const hit = KEYWORD_ICONS.find(([re]) => re.test(text));
+    if (t.type === "income") return { name: hit ? hit[1] : "wallet", tone: "in" };
+    return { name: hit ? hit[1] : "receipt", tone: "out" };
+  }
+
   function txRow(t, i = 0) {
     const sign = signed(t);
     const cat = t.type.startsWith("transfer") ? "Transfer" : t.type === "loan-in" ? "Loan repayment" : t.type === "loan-out" ? "Loan given" : categoryName(t.category_id);
     const title = t.description || cat;
+    const badge = txBadge(t, cat);
     return `<button class="tx ${t._qid ? "pending" : ""}" style="--i:${Math.min(i, 12)}" ${t._qid ? "" : `data-act="tx" data-id="${t.id}"`}>
-      <span class="logo">${esc(initials(title))}</span>
+      <span class="logo ${badge.tone}" aria-hidden="true">${icon(badge.name)}</span>
       <span class="body"><b>${esc(title)}</b>
-        <small>${esc(dateLabel(t.date))} · ${esc(cat)} · ${esc(accountName(t.account_id))}${t._qid ? " · waiting to sync" : ""}</small></span>
+        <small class="meta"><span class="when">${esc(dateLabel(t.date))}</span><span class="cat">${esc(cat)}</span><span class="acct">${esc(accountName(t.account_id))}</span>${t._qid ? `<span class="cat wait">Waiting to sync</span>` : ""}</small></span>
       <em class="num ${sign < 0 ? "neg" : "pos"}">${sign < 0 ? "−" : "+"}${num(t.amount)}</em>
     </button>`;
+  }
+
+  // Row for the plan and loan sheets (ledger entries, held assets, repayments): a badge,
+  // a title with a meta line, the amount on the right and an optional small action.
+  //   meta: [{ cls: "when" | "cat" | "acct", html }]   (html must already be escaped)
+  //   dir: 1 money in (green), -1 money out (red), 0 neutral
+  function entRow({ badge, tone, title, meta = [], amount = "", dir = 0, action = "" }) {
+    const sub = meta.length ? `<small class="meta">${meta.map((m) => `<span class="${m.cls}">${m.html}</span>`).join("")}</small>` : "";
+    return `<div class="tx ent">
+      <span class="logo ${tone}" aria-hidden="true">${icon(badge)}</span>
+      <span class="body"><b>${title}</b>${sub}</span>
+      <span class="side">${amount ? `<em class="num ${dir < 0 ? "neg" : dir > 0 ? "pos" : ""}">${amount}</em>` : ""}${action}</span>
+    </div>`;
   }
 
   const allRows = () => queue().concat(S.txns);
@@ -616,14 +676,14 @@
       <div class="wcard c${i % 5} ${a.id === openId ? "open" : ""} ${a.archived ? "archived" : ""}">
         <button class="wc-head" data-act="card" data-id="${a.id}" aria-label="Show ${esc(a.name)}">
           <span class="wc-name"><i>${esc(initials(a.name))}</i>${esc(a.name)}${a.archived ? `<em>Archived</em>` : ""}</span>
-          <b class="num">${rp(a.balance)}</b>
+          <b class="num">${a.balance < 0 ? "−" : ""}<small>Rp</small>${num(Math.abs(a.balance))}</b>
         </button>
         <div class="wc-body">
           <span>In this month<b class="num">${compact(flow(a.id, 1))}</b></span>
           <span>Out this month<b class="num">${compact(flow(a.id, -1))}</b></span>
           ${earmarkOf(a.id) > 0 ? `<span>Set aside<b class="num">${compact(earmarkOf(a.id))}</b></span>
-          <span>Free to spend<b class="num">${compact(a.balance - earmarkOf(a.id))}</b></span>` : ""}
-          <button class="wc-edit" data-act="account" data-id="${a.id}">Edit</button>
+          <span class="free">Free to spend<b class="num">${compact(a.balance - earmarkOf(a.id))}</b></span>` : ""}
+          <button class="wc-edit" data-act="account" data-id="${a.id}" aria-label="Edit ${esc(a.name)}">${icon("pencil")}</button>
         </div>
       </div>`).join("");
   }
@@ -786,7 +846,7 @@
         labels: months.map((m) => m.label),
         datasets: [
           { label: "Income", data: months.map((m) => total(m.key, "income")), backgroundColor: "#5a5a63", borderRadius: 5 },
-          { label: "Expense", data: months.map((m) => total(m.key, "expense")), backgroundColor: "#f26a2e", borderRadius: 5 },
+          { label: "Expense", data: months.map((m) => total(m.key, "expense")), backgroundColor: "#ee4d8c", borderRadius: 5 },
         ],
       },
       options: {
@@ -798,7 +858,7 @@
       },
     }));
     if (s.byCat.length && $("#donut")) {
-      const palette = ["#f26a2e", "#17161a", "#f7a57e", "#77737c", "#b9431a", "#c9c5c0", "#3a3a42", "#fbd2bd"];
+      const palette = ["#ee4d8c", "#17161a", "#f7a0c4", "#77737c", "#b02a63", "#c9c5c0", "#3a3a42", "#fbd0e2"];
       charts.push(new Chart($("#donut"), {
         type: "doughnut",
         data: { labels: s.byCat.map((c) => c[0]), datasets: [{ data: s.byCat.map((c) => c[1]), backgroundColor: palette, borderWidth: 2, borderColor: "#fff" }] },
@@ -820,8 +880,8 @@
       const unit = p.asset_type === "gold" ? "g" : "lembar";
       const label = p.name || p.ticker;
       return `<button class="tx" data-act="position" data-id="${i}">
-        <span class="logo">${esc(initials(p.ticker || label))}</span>
-        <span class="body"><b>${esc(label)}</b><small>${qtyFmt(p.qty)} ${unit} · avg ${rp(p.avg)}</small></span>
+        <span class="logo gold" aria-hidden="true">${icon(p.asset_type === "gold" ? "gold" : "stats")}</span>
+        <span class="body"><b>${esc(label)}</b><small class="meta"><span class="cat">${qtyFmt(p.qty)} ${unit}</span><span class="acct">avg ${rp(p.avg)}</span></small></span>
         <em class="num">${rp(p.value ?? p.cost)}
           ${p.pl === null ? `<small class="muted">at cost</small>` : `<small class="${p.pl < 0 ? "neg" : "pos"}">${p.pl < 0 ? "−" : "+"}${num(Math.abs(p.pl))}</small>`}</em>
       </button>`;
@@ -921,12 +981,13 @@
   // ------------------------------------------------------------ plans screen
   function planRow(p, i = 0) {
     const st = planStats(p);
-    const sub = st.status === "achieved" || p.status !== "active"
-      ? `${rp(st.saved)} of ${rp(st.target)}`
-      : `${rp(st.saved)} of ${rp(st.target)} · ${compact(st.monthly)}/bln`;
+    const running = st.status !== "achieved" && p.status === "active";
+    const sub = `<small class="meta"><span class="cat">${Math.round(st.progress * 100)}%</span>`
+      + `<span class="acct">${compact(st.saved)} of ${compact(st.target)}</span>`
+      + `${running ? `<span class="acct">${compact(st.monthly)}/bln</span>` : ""}</small>`;
     return `<button class="tx plan-row" style="--i:${Math.min(i, 12)}" data-act="plan" data-id="${p.id}">
       <span class="logo emoji" aria-hidden="true">${esc(p.icon)}</span>
-      <span class="body"><b>${esc(p.name)}</b><small>${sub}</small></span>
+      <span class="body"><b>${esc(p.name)}</b>${sub}</span>
       ${planTag(st)}${planBar(st)}
     </button>`;
   }
@@ -975,12 +1036,14 @@
   // ------------------------------------------------------------ loans screen
   function loanRow(l, i = 0) {
     const st = loanStats(l);
-    const sub = st.paid ? `${rp(l.amount)} · repaid`
-      : `${rp(st.outstanding)} left of ${rp(l.amount)}${l.due_date ? ` · due ${dateLabel(l.due_date)}` : ""}`;
+    const sub = `<small class="meta">` + (st.paid
+      ? `<span class="cat">Repaid</span><span class="acct">${compact(l.amount)}</span>`
+      : `<span class="cat">${compact(st.outstanding)} left</span><span class="acct">of ${compact(l.amount)}</span>`
+        + `${l.due_date ? `<span class="acct">due ${esc(dateLabel(l.due_date))}</span>` : ""}`) + `</small>`;
     const tag = st.paid ? `<span class="tag ok">Paid</span>` : st.overdue ? `<span class="tag due">Overdue</span>` : `<span class="tag">Open</span>`;
     return `<button class="tx plan-row" style="--i:${Math.min(i, 12)}" data-act="loan" data-id="${l.id}">
-      <span class="logo" aria-hidden="true">${esc(initials(memberName(l.borrower_id)))}</span>
-      <span class="body"><b>${esc(memberName(l.borrower_id))}</b><small>${esc(sub)}</small></span>
+      <span class="logo xfer" aria-hidden="true">${icon("user")}</span>
+      <span class="body"><b>${esc(memberName(l.borrower_id))}</b>${sub}</span>
       ${tag}<span class="bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(st.progress * 100)}"><i style="width:${(st.progress * 100).toFixed(1)}%"></i></span>
     </button>`;
   }
@@ -1606,22 +1669,39 @@
     const st = planStats(p);
     const cell = (name, value) => `<div><span>${name}</span><b class="num">${value}</b></div>`;
     const running = p.status === "active" && st.status !== "achieved";
-    const ENTRY = { deposit: "Added", withdrawal: "Taken out", adjustment: "Adjustment", asset_in: "Assigned", asset_out: "Released" };
-    const contribs = st.entries.map((c) => {
+    const ENTRY = { deposit: "Added money", withdrawal: "Taken out", adjustment: "Adjustment", asset_in: "Assigned", asset_out: "Released" };
+    const LEDGER_PREVIEW = 6; // newest entries shown at first; the rest sit behind "Show all"
+    const ledgerRows = st.entries.map((c) => {
       const asset = c.entry_type === "asset_in" || c.entry_type === "asset_out";
-      const sign = c.amount < 0 || c.entry_type === "asset_out" ? "−" : c.entry_type === "asset_in" || c.amount > 0 ? "+" : "";
-      const what = asset ? ` · ${esc(qtyLabel(c.asset_type, c.quantity))} ${esc(c.asset_name || c.ticker)}` : "";
-      return `<div class="list-row">
-        <span class="grow">${sign}${rp(Math.abs(c.amount))}<small>${ENTRY[c.entry_type]}${what} · ${esc(dateLabel(c.date))}${c.note ? ` · ${esc(c.note)}` : ""}${c.transaction_id ? " · linked to a transaction" : ""}</small></span>
-        ${isLocked(c.date) ? icon("lock") : asset ? "" : `<button class="link" data-act="contribution-delete" data-id="${c.id}">Remove</button>`}
-      </div>`;
-    }).join("") || `<div class="empty">No money added yet.</div>`;
+      const dir = c.entry_type === "asset_out" || c.amount < 0 ? -1 : c.entry_type === "asset_in" || c.amount > 0 ? 1 : 0;
+      const what = asset ? ` ${esc(qtyLabel(c.asset_type, c.quantity))} ${esc(c.asset_name || c.ticker)}` : "";
+      const badge = asset ? (c.asset_type === "gold" ? "gold" : "stats")
+        : c.entry_type === "deposit" ? "arrowIn" : c.entry_type === "withdrawal" ? "arrowOut" : "wallet";
+      const tone = asset ? "gold" : c.entry_type === "deposit" ? "in" : c.entry_type === "withdrawal" ? "xfer" : "out";
+      const meta = [{ cls: "when", html: esc(dateLabel(c.date)) }];
+      if (c.note) meta.push({ cls: "cat", html: esc(c.note) });
+      if (c.transaction_id) meta.push({ cls: "cat", html: "Linked to a transaction" });
+      return entRow({
+        badge, tone, title: `${ENTRY[c.entry_type]}${what}`, meta, dir,
+        amount: `${dir < 0 ? "−" : dir > 0 ? "+" : ""}${num(Math.abs(c.amount))}`,
+        action: isLocked(c.date) ? icon("lock") : asset ? "" : `<button class="chip-act" data-act="contribution-delete" data-id="${c.id}">Remove</button>`,
+      });
+    });
+    const contribs = !ledgerRows.length ? `<div class="empty">No money added yet.</div>`
+      : ledgerRows.slice(0, LEDGER_PREVIEW).join("") + (ledgerRows.length > LEDGER_PREVIEW
+        ? `<div class="ent-more" hidden>${ledgerRows.slice(LEDGER_PREVIEW).join("")}</div>
+           <button class="pill ghost-light show-more" type="button" data-act="ledger-more" data-all="Show all ${ledgerRows.length} transactions" data-less="Show fewer">Show all ${ledgerRows.length} transactions</button>`
+        : "");
     const heldRows = st.assets.map((a) => {
-      const pl = a.value === null ? "" : ` · ${a.value >= a.cost ? "+" : "−"}${rp(Math.abs(a.value - a.cost))}`;
-      return `<div class="list-row">
-        <span class="grow">${esc(a.lot.name || a.lot.ticker)} · ${esc(qtyLabel(a.lot.asset_type, a.qty))}<small>${a.value === null ? `${rp(a.cost)} at cost` : `${rp(a.value)} now${pl}`}</small></span>
-        ${p.status === "cancelled" ? "" : `<button class="link" data-act="plan-release" data-plan="${p.id}" data-id="${a.id}">Release</button>`}
-      </div>`;
+      const gain = a.value === null ? 0 : a.value - a.cost;
+      const meta = [{ cls: "cat", html: esc(qtyLabel(a.lot.asset_type, a.qty)) },
+        a.value === null ? { cls: "acct", html: "at cost" }
+          : { cls: `acct ${gain < 0 ? "neg" : "pos"}`, html: `${gain < 0 ? "−" : "+"}${num(Math.abs(gain))}` }];
+      return entRow({
+        badge: a.lot.asset_type === "gold" ? "gold" : "stats", tone: "gold", title: esc(a.lot.name || a.lot.ticker), meta,
+        amount: num(a.value ?? a.cost),
+        action: p.status === "cancelled" ? "" : `<button class="chip-act" data-act="plan-release" data-plan="${p.id}" data-id="${a.id}">Release</button>`,
+      });
     }).join("");
     const acct = p.account_id ? S.accounts.find((a) => a.id === p.account_id) : null;
     const statusBtns = {
@@ -1629,8 +1709,12 @@
       paused: [["active", "Resume"], ["cancelled", "Cancel plan"]],
       achieved: [["active", "Back to active"]],
       cancelled: [["active", "Resume"]],
-    }[p.status].map(([to, label]) => `<button class="pill ${to === "cancelled" ? "danger" : "ghost-light"}" type="button"
-        data-act="plan-status" data-id="${p.id}" data-to="${to}">${label}</button>`).join("");
+    }[p.status];
+    const STATUS_ICON = { paused: "pause", achieved: "check", active: "resume", cancelled: "close" };
+    const statusBtn = ([to, label]) => `<button class="pill ${to === "cancelled" ? "danger" : "ghost-light"}" type="button"
+        data-act="plan-status" data-id="${p.id}" data-to="${to}">${icon(STATUS_ICON[to])}<span>${label}</span></button>`;
+    const safeBtns = statusBtns.filter(([to]) => to !== "cancelled").map(statusBtn).join("");
+    const dangerBtns = statusBtns.filter(([to]) => to === "cancelled").map(statusBtn).join("");
     const lead = st.status === "achieved" ? `Reached ${rp(st.saved)}${p.achieved_at ? ` on ${esc(fullDate(p.achieved_at))}` : ""}.`
       : st.status === "overdue" ? `The target date has passed with ${rp(st.remaining)} still to go. Move the date or add money.`
       : st.status === "behind" ? `By now it should be about ${rp(st.expected)}. Putting in ${rp(st.monthly)} a month still gets there.`
@@ -1653,19 +1737,22 @@
       ${p.note ? `<p class="hint" style="margin:0">${esc(p.note)}</p>` : ""}
       <div class="chart-box" style="height:180px"><canvas id="plan-chart" aria-label="Saved over time against the plan"></canvas></div>
       <div class="error"></div>
-      ${p.status === "cancelled" ? "" : `<div class="plan-actions">
-        <button class="pill" type="button" data-act="plan-money" data-id="${p.id}">${icon("plus")} Add money</button>
-        ${S.plansLedger ? `<button class="pill ghost-light" type="button" data-act="plan-withdraw" data-id="${p.id}">Take out</button>
-        <button class="pill ghost-light" type="button" data-act="plan-assign" data-id="${p.id}">Gold or stock</button>` : ""}
+      ${p.status === "cancelled" ? "" : `<div class="plan-actions quick">
+        <button class="pill" type="button" data-act="plan-money" data-id="${p.id}">${icon("plus")}<span>Add money</span></button>
+        ${S.plansLedger ? `<button class="pill ghost-light" type="button" data-act="plan-withdraw" data-id="${p.id}">${icon("arrowOut")}<span>Take out</span></button>
+        <button class="pill ghost-light" type="button" data-act="plan-assign" data-id="${p.id}">${icon("gold")}<span>Gold or stock</span></button>` : ""}
       </div>`}
-      ${heldRows ? `<div class="section-label">Gold and stocks</div>${heldRows}` : ""}
+      ${heldRows ? `<div class="section-label">Gold and stocks</div><div class="ent-list">${heldRows}</div>` : ""}
       <div class="section-label">Ledger</div>
-      ${contribs}
+      <div class="ent-list">${contribs}</div>
       <div class="section-label">Plan</div>
+      <div class="plan-actions quick">
+        <button class="pill ghost-light" type="button" data-act="plan-edit" data-id="${p.id}">${icon("pencil")}<span>Edit</span></button>
+        ${safeBtns}
+      </div>
       <div class="plan-actions">
-        <button class="pill ghost-light" type="button" data-act="plan-edit" data-id="${p.id}">Edit</button>
-        ${statusBtns}
-        ${st.entries.length || st.assets.length ? "" : `<button class="pill danger" type="button" data-act="plan-delete" data-id="${p.id}">Delete plan</button>`}
+        ${dangerBtns}
+        ${st.entries.length || st.assets.length ? "" : `<button class="pill danger" type="button" data-act="plan-delete" data-id="${p.id}">${icon("trash")}<span>Delete plan</span></button>`}
       </div>
     </div>`);
     drawPlanChart(p, st);
@@ -1692,7 +1779,7 @@
       data: {
         labels: months.map((m) => new Date(m + "T00:00:00").toLocaleDateString("id-ID", { month: "short", year: "2-digit" })),
         datasets: [
-          { label: "Saved", data: months.map(savedBy), borderColor: "#f26a2e", backgroundColor: "rgba(242,106,46,0.12)", fill: true, tension: 0.25, pointRadius: 2, spanGaps: false },
+          { label: "Saved", data: months.map(savedBy), borderColor: "#ee4d8c", backgroundColor: "rgba(238, 77, 140,0.12)", fill: true, tension: 0.25, pointRadius: 2, spanGaps: false },
           { label: "Plan", data: months.map(line), borderColor: "#77737c", borderDash: [5, 4], pointRadius: 0, fill: false },
         ],
       },
@@ -1839,10 +1926,14 @@
     const st = loanStats(l);
     const cell = (name, value, cls = "") => `<div><span>${name}</span><b class="num ${cls}">${value}</b></div>`;
     const pays = loanPayments(l).slice().sort((a, b) => b.date.localeCompare(a.date));
-    const rows = pays.map((t) => `<div class="list-row">
-        <span class="grow">${rp(t.amount)}<small>${esc(dateLabel(t.date))} · into ${esc(accountName(t.account_id))}${t.description && / - /.test(t.description) ? ` · ${esc(t.description.replace(/^Loan repayment from \S+ - /, ""))}` : ""}</small></span>
-        ${isLocked(t.date) ? icon("lock") : `<button class="link" data-act="loan-payment-delete" data-id="${t.id}">Remove</button>`}
-      </div>`).join("") || `<div class="empty">No repayments yet.</div>`;
+    const rows = pays.map((t) => {
+      const meta = [{ cls: "when", html: esc(dateLabel(t.date)) }, { cls: "cat", html: `Into ${esc(accountName(t.account_id))}` }];
+      if (t.description && / - /.test(t.description)) meta.push({ cls: "cat", html: esc(t.description.replace(/^Loan repayment from \S+ - /, "")) });
+      return entRow({
+        badge: "arrowIn", tone: "in", title: "Repayment", meta, dir: 1, amount: `+${num(t.amount)}`,
+        action: isLocked(t.date) ? icon("lock") : `<button class="chip-act" data-act="loan-payment-delete" data-id="${t.id}">Remove</button>`,
+      });
+    }).join("") || `<div class="empty">No repayments yet.</div>`;
     const canDelete = !pays.length && !isLocked(l.date);
     const lead = st.paid ? "Fully repaid."
       : st.overdue ? `The due date (${esc(fullDate(l.due_date + "T00:00:00"))}) has passed with ${rp(st.outstanding)} still unpaid.`
@@ -1860,7 +1951,7 @@
       <div class="error"></div>
       ${st.paid ? "" : `<div class="plan-actions"><button class="pill" type="button" data-act="loan-pay" data-id="${l.id}">${icon("plus")} Record a repayment</button></div>`}
       <div class="section-label">Repayments</div>
-      ${rows}
+      <div class="ent-list">${rows}</div>
       <div class="section-label">Loan</div>
       <div class="plan-actions">
         <button class="pill ghost-light" type="button" data-act="loan-edit" data-id="${l.id}">Edit</button>
@@ -2278,6 +2369,13 @@
     },
     dismiss: (el, ev) => { if (ev.target === el) closeSheet(); },
     "signout-ask": () => sheetSignOut(),
+    // plan sheet: reveal or hide the older ledger entries
+    "ledger-more"(el) {
+      const more = el.parentElement.querySelector(".ent-more");
+      if (!more) return;
+      more.hidden = !more.hidden;
+      el.textContent = more.hidden ? el.dataset.all : el.dataset.less;
+    },
     async "sync-prices"(el) {
       if (syncing) return;
       if (Date.now() - (S.pricesAt || 0) < 15000) { toast("Prices were just updated."); return; } // spare the gold API's rate limit
