@@ -586,3 +586,12 @@ body::before {
 
 /* toast */
 #toast { background: var(--g-toast); border-color: var(--g-dark-line); -webkit-backdrop-filter: var(--blur); backdrop-filter: var(--blur); box-shadow: var(--spec), 0 10px 30px rgba(0, 0, 0, 0.35); }
+
+/* the dark-canvas ghost button turns into a light tile inside white sheets and modals,
+   where translucent white with white text would disappear */
+.modal .pill.ghost, .sheet .pill.ghost {
+  background: var(--g-tile); color: var(--ink); border-color: transparent;
+  -webkit-backdrop-filter: none; backdrop-filter: none;
+  box-shadow: var(--spec-light), inset 0 0 0 1px rgba(23, 22, 26, 0.06);
+}
+.modal .pill.ghost:active, .sheet .pill.ghost:active { background: rgba(23, 22, 26, 0.09); }
