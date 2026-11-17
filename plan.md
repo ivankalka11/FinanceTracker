@@ -21,10 +21,12 @@ Supabase is the default database. The phone-first PWA (`pwa/`) is the main front
 | V2.9 | Loans: lend from an account to a member, repayments, unpaid loans on each statement | Done; `20261122000000_loans.sql` is run on the live project (the Loans screens load) |
 | V2.10 | Gold price fallback (public price-cards page when the Emas API fails); visual refresh: burgundy dark-glass theme, glass dropdown menus, calendar and category list, animation fixes | Done; redeploy the `prices` function and the app |
 | V2.11 | Security hardening: integrity hashes on CDN scripts, tighter headers pinned to your Supabase host, Edge Function limits and optional origin lock, household and member limits, V1 formula and bot fixes | Done; rolled out (sign-ups off, hardening migration run, functions and app redeployed) |
+| V2.12 | Query performance for larger data: membership checked once per query instead of per row (11 to 47 times faster reads at 100,000 rows), parallel history download, one write of the offline cache, one-pass totals | Code and tests done; run `20261124000000_query_performance.sql` and redeploy the app |
 
 ## Next
 
-Nothing is committed to next. The V2.11 rollout and the GitHub Pages cleanup are done. Candidates when needed: the scale fixes listed under Decisions made.
+1. **V2.12 rollout:** run `supabase/migrations/20261124000000_query_performance.sql` in the SQL Editor, then `python scripts/deploy_pwa.py`. The V2.11 rollout and the GitHub Pages cleanup are done.
+2. Candidates when data grows: the scale fixes listed under Decisions made.
 
 ## Decisions made
 
@@ -36,7 +38,8 @@ Nothing is committed to next. The V2.11 rollout and the GitHub Pages cleanup are
 - Receipt photos are not stored. The unused `receipts` table can be dropped later.
 - The look is dark burgundy glass on pages and modals; blur is kept off pages and moving tiles for scrolling speed. Pickers (dropdown, calendar, category list) are custom so they match; iPhone Safari keeps its native select picker.
 - Public sign-ups stay off: the app cannot enforce it, so it is a Supabase setting to verify. The household and member limits and the generic add-member message reduce abuse but do not hide whether an email has an account.
-- Known scale limits, not yet worth the work at this size: the app reloads the whole history on start and after every write, and keeps a copy in localStorage (a few thousand transactions fit). Fixes when needed: load recent months plus server totals, an IndexedDB cache, load Chart.js on demand, self-host fonts and libraries, and serve the app shell from cache first.
+- Query performance (V2.12, measured on 100,000 transactions as a signed-in user): reading the whole history fell from 1,178 ms to 104 ms, the deepest page from 1,736 ms to 97 ms, account balances from 928 ms to 36 ms and a row count from 842 ms to 18 ms, by checking membership once per query. The cause was the per-row `private.is_member()` call in the row-level security policies.
+- Remaining scale limits, not worth the work at today's size (a few hundred rows): the app still downloads the whole history on start and after every write (about 30 MB of JSON at 100,000 rows), and its offline copy is trimmed to two years when it does not fit in localStorage. Fixes when needed: load recent months plus server totals, an IndexedDB cache, load Chart.js on demand, self-host fonts and libraries, and serve the app shell from cache first.
 
 ## Parked (off the roadmap)
 

@@ -376,6 +376,7 @@ All calls go to the `/exec` URL with `?action=...` and the shared secret.
 | `delete_loan_payment(p_txn)` | RPC | Removes a repayment in an open month and refreshes the loan's status. |
 | `household_members(p_household)` | RPC | Members with their email (user id, role, email), for the borrower picker. Members only. |
 | `private.loan_figures(p_household, p_month)` | internal | Loans unpaid at month end, as JSON. Used by `period_statement` and by the closing snapshot trigger. |
+| `private.my_households()` | internal | The signed-in user's household ids; used by the row-level security policies. |
 | `notify` | Edge Function (dropped) | Was planned to send Web Push / Telegram. Not built; checks run in the database (`run_notifications()`). |
 
 ## 4. Data requirements
@@ -484,7 +485,7 @@ Google Sheet tabs: `Transactions`, `Holdings`, `Realized`. Columns mirror the V2
 
 | ID | Requirement |
 | --- | --- |
-| NFR-SEC-01 | Every V2 table has RLS enabled. Access is granted only when `private.is_member(household_id)` is true; owner-only actions use `private.is_owner`. |
+| NFR-SEC-01 | Every V2 table has RLS enabled. Access is granted only to members of the row's household (`household_id in (select private.my_households())`, equivalent to `private.is_member`); owner-only actions use `private.is_owner`. |
 | NFR-SEC-02 | New tables must enable RLS and follow the same policy shape. |
 | NFR-SEC-03 | The service-role key never reaches the browser; code using it filters every query by `household_id`. |
 | NFR-SEC-04 | `.env`, `Dashboard/config.js` and `pwa/config.js` are never committed, and their values are never printed. |
@@ -508,7 +509,8 @@ Google Sheet tabs: `Transactions`, `Holdings`, `Realized`. Columns mirror the V2
 | NFR-PRF-02 | Saving a transaction completes in under 2 seconds on a normal mobile connection. |
 | NFR-PRF-03 | An on-device scan returns rows in under 10 seconds after the models are cached. |
 | NFR-PRF-04 | Portfolio prices load in under 5 seconds; the app does not block on them. |
-| NFR-PRF-05 | Known limit: the app loads the whole transaction history on start and after every write, and keeps a copy in localStorage. That suits a few thousand rows; larger histories need recent-months loading and an IndexedDB cache (see `plan.md`). |
+| NFR-PRF-05 | Known limit: the app loads the whole transaction history on start and after every write (pages after the first load four at a time). That suits tens of thousands of rows; larger histories need recent-months loading and an IndexedDB cache (see `plan.md`). The offline copy in localStorage is written once per burst of changes and trimmed to the last two years when it does not fit. |
+| NFR-PRF-07 | Reading a household's whole history (100,000 transactions) takes under 150 ms in the database as a signed-in user, and the account balances under 100 ms: row-level security checks membership once per query, not once per row. |
 | NFR-PRF-06 | Blur effects are kept off full-screen pages and off elements while they animate, so scrolling and sheet motion stay at 60 fps on a mid-range phone. |
 
 ### 6.3 Reliability and availability
@@ -569,6 +571,7 @@ Google Sheet tabs: `Transactions`, `Holdings`, `Realized`. Columns mirror the V2
 | Loans | Lend from Bersama to a member: Bersama's balance falls, income and expense totals do not move. Choose a non-member as borrower (refused). Lend more than the account holds (refused in the app). Repay part of it into Bersama, then more than is owed (refused); repay the rest and confirm the status turns to paid. Close the month a loan was made in: the statement lists it with the outstanding amount; repay it next month and confirm the old statement is unchanged and the new one no longer lists it. Try to add, edit or delete a loan or repayment dated in a closed month (refused). Delete a loan that has a repayment (refused). Run `sh tests/sql/run.sh` for the SQL rules. |
 | Hardening | Run `sh tests/sql/run.sh` (the hardening suite checks the household and member limits, the generic add-member message and that the private helpers refuse signed-in users). In Supabase, confirm "Allow new users to sign up" is off. Load the app and check that supabase-js and Chart.js load (an altered file would be refused by its integrity hash). |
 | Appearance | Open Home, Overview, Portfolio, Settings and a sheet (Add, a plan): text is readable on the glass, dropdown menus and the calendar open as glass panels, closing a sheet keeps its blur, and nothing stutters while sheets open and close. |
+| Query performance | Seed about 100,000 transactions in the Docker Postgres and time the whole-history read, the deepest page, `account_balances` and a count as the `authenticated` role (targets: NFR-PRF-07). `sh tests/sql/run.sh` includes `rls_test.sql`, which checks that members see their household, outsiders see nothing and cannot write, and signed-out visitors are refused. |
 | Notifications | Subscribe a device, run the `notify` function twice for the same day; confirm no duplicates. Block push; confirm the in-app list still shows them. |
 
 ## 8. Open items
@@ -581,4 +584,4 @@ Google Sheet tabs: `Transactions`, `Holdings`, `Realized`. Columns mirror the V2
 6. Loans (3.14a, V2.9): built in code and covered by `tests/sql/loans_test.sql`; the migration `20261122000000_loans.sql` has been run on the live Supabase project and the Loans screens load, but lending and repaying have not been exercised against live data. Decided: money lent from a household account (such as Bersama) to a household member who pays it back; principal only (no interest or schedule); not income or expense. Assumed, to confirm: the borrower shows by the part of their email before the `@` (members have no name field); any member can add loans and repayments (only closing stays owner-only); an account may not be lent more than it holds, enforced in the app only.
 7. Off the roadmap for now: the Telegram webhook (FR-BOT-05 to FR-BOT-08, built but not deployed), Sheets mode and the nightly mirror (FR-MIG-03, FR-MIG-04), and hosting for the V1 bot and dashboard.
 8. Security hardening (V2.11) is built, tested and rolled out on the live project (sign-ups off, hardening migration run, functions and app redeployed). GitHub Pages is unpublished. If the V1 Apps Script web app is no longer used, undeploy it; its old URL is in early commits.
-9. Known performance limits (NFR-PRF-05): full history reload and localStorage cache; render-blocking Google Fonts and two synchronous CDN scripts; the service worker rechecks every app file on each launch. Planned fixes are listed in `plan.md`.
+9. Known performance limits (NFR-PRF-05): the whole history is downloaded on start and after every write; render-blocking Google Fonts and two synchronous CDN scripts; the service worker rechecks every app file on each launch. Planned fixes are listed in `plan.md`.

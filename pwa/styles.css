@@ -779,3 +779,19 @@ input[type="date"]:read-only:focus { border-color: var(--accent); }
 .sheet .tx .meta .cat.wait { background: rgba(240, 137, 159, 0.2); color: var(--accent-press); }
 .sheet .tx .logo.in { background: rgba(76, 195, 138, 0.2); color: var(--green); }
 
+
+/* ---------- loading skeletons (built in app.js: skeleton(); Home copy in index.html) ----------
+   Grey shapes laid out like the real screen. The shimmer moves with transform only, so it runs
+   on the compositor and stays smooth while the app is busy loading. */
+.sk { display: block; position: relative; overflow: hidden; flex: none; background: rgba(255, 255, 255, 0.075); }
+.sk::after { content: ""; position: absolute; inset: 0; transform: translateX(-100%);
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.11), transparent); }
+@media (prefers-reduced-motion: no-preference) {
+  .sk::after { animation: sk-shimmer 1.4s ease-in-out infinite; }
+  @keyframes sk-shimmer { to { transform: translateX(100%); } }
+}
+.sk-tx { cursor: default; pointer-events: none; }
+.sk-sheet { pointer-events: none; }
+.skel { pointer-events: none; user-select: none; }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.nav.sk-nav { justify-content: space-around; }

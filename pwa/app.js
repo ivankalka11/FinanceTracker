@@ -110,12 +110,12 @@
   // ------------------------------------------------------------ local storage (cache + offline queue)
   const store = {
     get(key, fallback) { try { return JSON.parse(localStorage.getItem(key)) ?? fallback; } catch { return fallback; } },
-    set(key, value) { try { localStorage.setItem(key, JSON.stringify(value)); } catch { /* storage full or blocked */ } },
+    set(key, value) { try { localStorage.setItem(key, JSON.stringify(value)); return true; } catch { return false; /* storage full or blocked */ } },
   };
   const queue = () => store.get("ft.queue", []);
 
-  function saveCache() {
-    store.set("ft.cache", {
+  function cacheData() {
+    return {
       household: S.household, households: S.households, accounts: S.accounts, categories: S.categories,
       txns: S.txns, holdings: S.holdings, sales: S.sales, members: S.members, prices: S.prices, pricesAt: S.pricesAt,
       closings: S.closings, ledgerReady: S.ledgerReady,
@@ -123,8 +123,27 @@
       plansLedger: S.plansLedger, plansReady: S.plansReady,
       notifs: S.notifs, prefs: S.prefs,
       loans: S.loans, loansReady: S.loansReady, memberEmails: S.memberEmails,
-    });
+    };
   }
+  // Several callers ask to save in a row (a refresh, the bell, prices): turn that into one write
+  // a moment later, because stringifying the whole history blocks the screen. localStorage holds
+  // about 5 MB; if the history does not fit, keep the last two years of entries (balances come from
+  // the account list, so they stay right; only older entries are missing while offline).
+  let cacheTimer = 0;
+  function writeCache() {
+    cacheTimer = 0;
+    const data = cacheData();
+    if (store.set("ft.cache", data)) return;
+    const cut = shiftDay(today(), -730);
+    data.txns = data.txns.filter((t) => t.date >= cut);
+    data.ledger = (data.ledger || []).filter((c) => c.date >= cut);
+    store.set("ft.cache", data);
+  }
+  function saveCache() {
+    clearTimeout(cacheTimer);
+    cacheTimer = setTimeout(writeCache, 400);
+  }
+  function flushCache() { if (cacheTimer) { clearTimeout(cacheTimer); writeCache(); } }
   function loadCache() {
     const c = store.get("ft.cache", null);
     if (!c || !c.household) return false;
@@ -135,15 +154,32 @@
   // ------------------------------------------------------------ data
   const check = (res) => { if (res.error) throw res.error; return res.data; };
 
+  // `build()` must select with { count: "exact" } and end in a total order, so that pages never
+  // overlap or skip a row. Page 1 tells how many rows there are; the rest load a few at a time
+  // instead of one after another (each page is a round trip, which adds up on a phone).
   async function fetchAll(build) {
     const size = 1000; // PostgREST returns at most 1000 rows per request
-    let from = 0, out = [];
-    for (;;) {
-      const rows = check(await build().range(from, from + size - 1));
-      out = out.concat(rows);
-      if (rows.length < size) return out;
-      from += size;
+    const first = await build().range(0, size - 1);
+    const rows = check(first);
+    const total = first.count;
+    if (rows.length < size) return rows;
+    if (typeof total !== "number") { // no count: fall back to one page after another
+      let out = rows, from = size;
+      for (;;) {
+        const more = check(await build().range(from, from + size - 1));
+        out = out.concat(more);
+        if (more.length < size) return out;
+        from += size;
+      }
     }
+    const starts = [];
+    for (let from = size; from < total; from += size) starts.push(from);
+    const pages = [rows];
+    for (let i = 0; i < starts.length; i += 4) {
+      const batch = await Promise.all(starts.slice(i, i + 4).map(async (from) => check(await build().range(from, from + size - 1))));
+      pages.push(...batch);
+    }
+    return pages.flat();
   }
 
   async function refresh() {
@@ -153,8 +189,8 @@
       sb.from("account_balances").select("*").eq("household_id", hid).order("sort_order").order("name"),
       sb.from("accounts").select("id, opening_balance").eq("household_id", hid),
       sb.from("categories").select("*").eq("household_id", hid).order("name"),
-      fetchAll(() => sb.from("transactions").select("*").eq("household_id", hid)
-        .order("date", { ascending: false }).order("created_at", { ascending: false })),
+      fetchAll(() => sb.from("transactions").select("*", { count: "exact" }).eq("household_id", hid)
+        .order("date", { ascending: false }).order("created_at", { ascending: false }).order("id", { ascending: false })),
       sb.from("holdings").select("*").eq("household_id", hid).order("created_at"),
       sb.from("sales").select("*").eq("household_id", hid).order("date", { ascending: false }),
       sb.from("members").select("user_id, role").eq("household_id", hid),
@@ -317,7 +353,14 @@
     const e = S.memberEmails[uid];
     return e ? e.split("@")[0] : uid ? "A member" : "A former member";
   };
-  const loanRepaid = (l) => S.txns.filter((t) => t.loan_id === l.id && t.type === "loan-in").reduce((s, t) => s + t.amount, 0);
+  let repaidSrc = null, repaidLen = -1, repaidBy = new Map();
+  const loanRepaid = (l) => {
+    if (repaidSrc !== S.txns || repaidLen !== S.txns.length) { // S.txns is replaced, never edited in place
+      repaidSrc = S.txns; repaidLen = S.txns.length; repaidBy = new Map();
+      for (const t of S.txns) if (t.type === "loan-in" && t.loan_id) repaidBy.set(t.loan_id, (repaidBy.get(t.loan_id) || 0) + t.amount);
+    }
+    return repaidBy.get(l.id) || 0;
+  };
   const loanStats = (l) => {
     const repaid = loanRepaid(l), outstanding = Math.max(l.amount - repaid, 0);
     const overdue = outstanding > 0 && !!l.due_date && l.due_date < today();
@@ -558,6 +601,50 @@
     </nav>`;
   }
 
+  // ------------------------------------------------------------ loading skeletons
+  // Shown while the first data loads: grey shapes laid out like the real screen, so the page does
+  // not jump when the data arrives. pwa/index.html holds a static copy of the Home skeleton (made
+  // from this code) for the moment before this script has run; keep the two in step.
+  // skeleton:begin
+  const sk = (w, h, r = 8) =>
+    `<i class="sk" style="${w === "flex" ? "flex:1" : `width:${typeof w === "number" ? `${w}px` : w}`};height:${h}px;border-radius:${typeof r === "number" ? `${r}px` : r}"></i>`;
+  const skLines = (a = "60%", b = "40%") => `<div class="grow" style="display:grid;gap:7px">${sk(a, 13)}${sk(b, 10)}</div>`;
+  const skTx = () => `<div class="tx sk-tx">${sk(38, 38, 11)}${skLines("65%", "45%")}${sk(56, 14)}</div>`;
+  const skCard = (rows = 2) => `<div class="card"><div class="row between">${sk(72, 14)}${sk(58, 24, "12px")}</div>${
+    Array.from({ length: rows }, () => `<div class="row">${sk(36, 36, "12px")}${skLines()}${sk(58, 20, "999px")}</div>`).join("")}</div>`;
+  const skStats = () => `<div class="stats">${Array.from({ length: 3 }, () => `<div class="stat">${sk(54, 10)}<div style="height:7px"></div>${sk(46, 15)}</div>`).join("")}</div>`;
+  const skList = (title, n = 5) => `<div class="sheet sk-sheet"><div class="row between">${sk(title, 18)}${sk(64, 26, "13px")}</div>${Array.from({ length: n }, skTx).join("")}</div>`;
+  function skeleton(tab) {
+    if (tab === "stats") {
+      return `<div class="top skel" data-sk="stats" aria-hidden="true">${sk(110, 22)}${sk("100%", 44, "999px")}${skStats()}
+        <div class="card">${sk(150, 14)}${sk("100%", 170, "14px")}</div></div>${skList(150, 4)}`;
+    }
+    if (tab === "portfolio") {
+      return `<div class="top skel" data-sk="portfolio" aria-hidden="true">${sk(100, 22)}<div style="display:grid;gap:8px">${sk(90, 12)}${sk(200, 32)}</div>${skStats()}
+        <div class="row">${sk("flex", 44, "999px")}${sk("flex", 44, "999px")}</div></div>${skList(100, 3)}`;
+    }
+    if (tab === "settings") {
+      return `<div class="top skel" data-sk="settings" aria-hidden="true">${sk(90, 22)}
+        <div class="card"><div class="row">${sk(40, 40, "50%")}${skLines("70%", "45%")}</div><div class="row">${sk("flex", 40, "999px")}${sk("flex", 40, "999px")}</div></div></div>${skList(100, 3)}`;
+    }
+    if (tab === "home") {
+      return `<div class="top skel" data-sk="home" aria-hidden="true">
+        <div class="row between"><div class="row">${sk(40, 40, "50%")}<div style="display:grid;gap:7px">${sk(70, 10)}${sk(110, 14)}</div></div>
+          <div class="row" style="gap:8px">${sk(40, 40, "50%")}${sk(40, 40, "50%")}</div></div>
+        <div style="display:grid;gap:8px">${sk(90, 12)}${sk(210, 32)}</div>
+        <div class="row">${sk("flex", 44, "999px")}${sk("flex", 44, "999px")}</div>
+        <div class="card"><div class="row between">${sk(80, 14)}${sk(58, 24, "12px")}</div>${sk("100%", 54, "18px")}${sk("100%", 54, "18px")}${sk("100%", 54, "18px")}</div>
+        ${skStats()}${skCard(2)}</div>${skList(150, 4)}`;
+    }
+    return `<div class="top skel" data-sk="${tab}" aria-hidden="true">${sk(120, 22)}</div>${skList(130, 5)}`;
+  }
+  // skeleton:end
+
+  function paintSkeleton() {
+    const tab = currentTab();
+    app.innerHTML = `<span class="sr-only" role="status">Loading…</span>${skeleton(tab)}${nav(tab).replace('<nav class="nav">', '<nav class="nav" inert aria-hidden="true">')}`;
+  }
+
   let paintedView = null, enterTimer;
   function paint(tab, html) {
     charts.forEach((c) => c.destroy());
@@ -669,9 +756,14 @@
   function accountStack(list) {
     const openId = list.some((a) => a.id === S.openAccount) ? S.openAccount : list[list.length - 1]?.id;
     const [mFrom, mTo] = periodRange("month");
-    const flow = (id, sign) => S.txns
-      .filter((t) => t.account_id === id && t.date >= mFrom && t.date <= mTo && Math.sign(signed(t)) === sign)
-      .reduce((s, t) => s + t.amount, 0);
+    const flows = new Map(); // account id -> { in, out } for this month, from one pass over the entries
+    for (const t of S.txns) {
+      if (t.date < mFrom || t.date > mTo) continue;
+      const f = flows.get(t.account_id) || { in: 0, out: 0 };
+      if (signed(t) > 0) f.in += t.amount; else f.out += t.amount;
+      flows.set(t.account_id, f);
+    }
+    const flow = (id, sign) => (flows.get(id) || { in: 0, out: 0 })[sign > 0 ? "in" : "out"];
     return list.map((a, i) => `
       <div class="wcard c${i % 5} ${a.id === openId ? "open" : ""} ${a.archived ? "archived" : ""}">
         <button class="wc-head" data-act="card" data-id="${a.id}" aria-label="Show ${esc(a.name)}">
@@ -2635,6 +2727,8 @@
     async signout() {
       if (notifChannel) { sb.removeChannel(notifChannel); notifChannel = null; }
       checkedAt = 0;
+      clearTimeout(cacheTimer); // a pending save must not bring the cache back after sign-out
+      cacheTimer = 0;
       localStorage.removeItem("ft.cache");
       // "local" ends this device's session. If the server cannot be reached, supabase-js keeps
       // the session and returns an error, which used to leave the button doing nothing.
@@ -2894,14 +2988,17 @@
   });
   window.addEventListener("online", () => { if (S.household) reload(); });
   document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "hidden") flushCache();
     if (document.visibilityState === "visible" && S.household && S.session) runChecks().catch(() => {});
   });
+  window.addEventListener("pagehide", flushCache);
   window.addEventListener("offline", () => { S.offline = true; if (S.household) route(); });
 
   // ------------------------------------------------------------ startup
   async function start() {
     closeSheet();
     if (!S.session) { S.household = null; return viewLogin(); }
+    if (app.querySelector(".skel")?.dataset.sk !== currentTab()) paintSkeleton(); // the page's own copy already covers Home
     const res = await sb.from("households").select("*").order("created_at");
     if (res.error) {
       if (isNetworkError(res.error) && loadCache()) { S.offline = true; return route(); }

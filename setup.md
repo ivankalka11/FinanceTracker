@@ -128,6 +128,8 @@ After any change to `supabase/functions/_shared/`, redeploy `prices` and `ocr` (
 
 **Existing projects: run the hardening migration.** In the SQL Editor, run `supabase/migrations/20261123000000_hardening.sql` once. It limits households per user (3) and members per household (10), and locks down internal helper functions. New projects get it from `setup_all.sql`. It does not replace turning sign-ups off (step above): with sign-ups on, anyone could create an account.
 
+**Existing projects: run the query-performance migration.** After the hardening one, run `supabase/migrations/20261124000000_query_performance.sql` once in the SQL Editor. It makes reads of a large history much faster (membership is checked once per query, not once per row) and changes nothing about who can see what. New projects get it from `setup_all.sql`.
+
 **Bring your data from the old Google Sheet version.** Add `SUPABASE_SECRET_KEY` and `APPS_SCRIPT_URL` / `API_SECRET` to `.env`, then preview and run (safe to repeat):
 
 ```bash
