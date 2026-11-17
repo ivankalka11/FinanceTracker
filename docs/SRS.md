@@ -292,15 +292,15 @@ A *period* is one calendar month in Asia/Jakarta time. A period is **open** unti
 | FR-PLN-19 | After an expense or investment is saved, the app warns when the account's balance is below the amount set aside. It does not block the entry. | C | V2.6 | BR-39 |
 | FR-PLN-20 | Before an owner closes a month, the app fetches the market price of the **last day of that month** for every asset assigned to a plan (the closing price of the last trading day on or before it for stocks; the last Antam buyback on or before it, up to 7 days back, for gold) and saves it with `set_month_end_prices()` (owner only, refused for a closed month), together with the day the price is for (`price_date`). The statement values assigned holdings with those prices and shows the day (`prices_on`). If a month-end price cannot be fetched, today's price is saved instead and the statement shows that day; without any saved price it uses cost and says so. | C | V2.6, V2.7 | BR-38 |
 
-### 3.14 Notifications (V2.5; Web Push planned)
+### 3.14 Notifications (V2.5; in-app only, Web Push dropped)
 
 | ID | Requirement | Pri | Version | Trace |
 | --- | --- | --- | --- | --- |
 | FR-NTF-01 | A scheduled job (Supabase `pg_cron` calling `run_notifications()`) runs every day at 08:00, 12:00 and 16:00 WIB and works out which plan and closing notifications are due. The app runs the same check for its household when it opens (`check_notifications()`), so nothing depends on the schedule alone. | M | V2.5 | BR-27, BR-32 |
 | FR-NTF-02 | Each notification is written to a `notifications` table first (user, kind, title, body, link, created_at, read_at), then delivered. A unique key per (user, kind, subject, period) prevents duplicates. | M | V2.5 | BR-32 |
-| FR-NTF-03 | Delivery channels: Web Push to every device the user has subscribed (`push_subscriptions`, VAPID keys held as function secrets); Telegram message when the user's account is linked and the bot is deployed. | M | Planned | BR-33 |
+| FR-NTF-03 | Delivery channels: the in-app list only. Web Push (`push_subscriptions`, VAPID keys) and a Telegram message were planned and are dropped; the table and `save_push_subscription()` stay unused. | M | Dropped | BR-33 |
 | FR-NTF-04 | The app shows an in-app notification list (bell icon with unread count) so nothing is lost when push is blocked. | M | V2.5 | BR-33 |
-| FR-NTF-05 | Settings lets each user turn push on or off for this device and turn each kind (plan milestones, plan behind, plan deadlines, monthly plan reminder, month-close reminder) on or off. | S | V2.5 (kinds; push switch with Web Push) | BR-33 |
+| FR-NTF-05 | Settings lets each user turn each kind (plan milestones, plan behind, plan deadlines, monthly plan reminder, month-close reminder) on or off. The per-device push switch was dropped with Web Push. | S | V2.5 | BR-33 |
 | FR-NTF-06 | Tapping a notification opens the related plan or statement. | S | V2.5 | BR-33 |
 | FR-NTF-07 | On iPhone, push is only offered once the app is installed to the home screen; the app explains this. | S | Planned | BR-33 |
 | FR-NTF-08 | Milestone and achieved notifications are also checked immediately after a contribution is saved, not only by the daily job. | S | V2.5 | BR-32 |
@@ -364,7 +364,7 @@ All calls go to the `/exec` URL with `?action=...` and the shared secret.
 | `period_statement(p_household, p_month)` | RPC | Live draft figures for a month (same maths as the snapshot), plus `can_close` and `blocked_reason`. |
 | `check_notifications(p_household)` | RPC | Runs the daily plan and month-close checks for the household when the app opens; returns the caller's unread count. |
 | `run_notifications()` | RPC | Called by `pg_cron` at 08:00, 12:00 and 16:00 WIB for every household; trims old notifications. |
-| `save_push_subscription(p_endpoint, p_p256dh, p_auth, p_user_agent)` | RPC | Stores this device's Web Push subscription. |
+| `save_push_subscription(p_endpoint, p_p256dh, p_auth, p_user_agent)` | RPC | Stores a Web Push subscription. Unused: Web Push was dropped. |
 | `assign_holding_to_plan(p_plan, p_holding, p_quantity, p_price, p_date)` | RPC | Earmark a quantity of a lot for a plan; writes an `asset_in` entry. |
 | `unassign_holding_from_plan(p_plan, p_holding, p_quantity, p_price, p_date)` | RPC | Release a lot (all of it when no quantity is given); writes an `asset_out` entry. |
 | `account_earmarks(p_household)` | RPC | Cash set aside for plans, per account. |
@@ -376,7 +376,7 @@ All calls go to the `/exec` URL with `?action=...` and the shared secret.
 | `delete_loan_payment(p_txn)` | RPC | Removes a repayment in an open month and refreshes the loan's status. |
 | `household_members(p_household)` | RPC | Members with their email (user id, role, email), for the borrower picker. Members only. |
 | `private.loan_figures(p_household, p_month)` | internal | Loans unpaid at month end, as JSON. Used by `period_statement` and by the closing snapshot trigger. |
-| `notify` | Edge Function (planned) | Daily job: works out due notifications and sends Web Push / Telegram. |
+| `notify` | Edge Function (dropped) | Was planned to send Web Push / Telegram. Not built; checks run in the database (`run_notifications()`). |
 
 ## 4. Data requirements
 
@@ -491,7 +491,7 @@ Google Sheet tabs: `Transactions`, `Holdings`, `Realized`. Columns mirror the V2
 | NFR-SEC-05 | The PWA is served with a strict content security policy (including `upgrade-insecure-requests`), `Strict-Transport-Security`, `Cross-Origin-Opener-Policy: same-origin`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`, `nosniff`, camera allowed only for self, and `noindex`. The deploy script narrows the policy's Supabase host to the project's own. |
 | NFR-SEC-06 | The Telegram webhook rejects requests without the correct secret header, compared in constant time. |
 | NFR-SEC-07 | Closing and reopening are enforced as owner-only inside the RPCs, not just hidden in the UI. |
-| NFR-SEC-08 | Notification payloads contain no amounts on the lock screen beyond what the user turned on; VAPID private keys stay in function secrets. |
+| NFR-SEC-08 | Notifications are shown inside the app only, so nothing appears on a lock screen. (If push is ever added: generic text, and VAPID private keys in function secrets.) |
 | NFR-SEC-09 | V1 limitation, accepted: `API_SECRET` ships to the browser in `config.js`, so the V1 dashboard is only as private as its URL. |
 | NFR-SEC-10 | Loan RPCs check `private.is_member` and, for the borrower, that the chosen user belongs to the same household; they never trust an id from the client without that check. |
 | NFR-SEC-11 | The scripts the app depends on (supabase-js, Chart.js) carry `integrity` hashes with `crossorigin`; the service worker caches them with a CORS request so the check still passes offline. |
@@ -576,9 +576,9 @@ Google Sheet tabs: `Transactions`, `Holdings`, `Realized`. Columns mirror the V2
 1. Receipt photos are not stored, by decision. The `receipts` table is unused and can be dropped by a future migration.
 2. Ledger closing (3.12): built (V2.4). The month-close reminders (FR-CLS-12) and the plan section of the statement (FR-PLN-11) are built too.
 3. Plans (3.13): built (V2.5 to V2.7). Decided: sale proceeds go into plan cash (FR-PLN-17); notification checks keep using cost (FR-PLN-16); the statement uses last-day-of-month prices (FR-PLN-20); "Add money" never creates a transfer automatically.
-4. Notifications (3.14): in-app list, settings and database checks are built. Web Push delivery is not: it needs VAPID keys, the `notify` function, a `push` handler and a per-device switch, and the PWA's `_headers` must allow the push service endpoints. `pg_cron` must be enabled on the Supabase project.
+4. Notifications (3.14): in-app list, settings and database checks are built. Web Push delivery was dropped by decision (the bell is enough). `pg_cron` must be enabled on the Supabase project for the scheduled checks.
 5. The V2.5 and V2.6 migrations (`20261118000000_plans.sql`, `20261119000000_plan_ledger.sql`) have been run on the live Supabase project. The V2.7 migration (`20261120000000_plan_sale_and_month_end.sql`) must be run, and the `prices` function redeployed (`npx supabase functions deploy prices`), for sale proceeds and month-end prices.
 6. Loans (3.14a, V2.9): built in code and covered by `tests/sql/loans_test.sql`; the migration `20261122000000_loans.sql` has been run on the live Supabase project and the Loans screens load, but lending and repaying have not been exercised against live data. Decided: money lent from a household account (such as Bersama) to a household member who pays it back; principal only (no interest or schedule); not income or expense. Assumed, to confirm: the borrower shows by the part of their email before the `@` (members have no name field); any member can add loans and repayments (only closing stays owner-only); an account may not be lent more than it holds, enforced in the app only.
 7. Off the roadmap for now: the Telegram webhook (FR-BOT-05 to FR-BOT-08, built but not deployed), Sheets mode and the nightly mirror (FR-MIG-03, FR-MIG-04), and hosting for the V1 bot and dashboard.
-8. Security hardening (V2.11) is built and tested. Still to do on the live project: confirm public sign-ups are off, run `20261123000000_hardening.sql`, optionally set `ALLOWED_ORIGINS`, redeploy `prices` and `ocr`, and redeploy the app. If the V1 Apps Script web app is no longer used, undeploy it; its old URL is in early commits.
+8. Security hardening (V2.11) is built, tested and rolled out on the live project (sign-ups off, hardening migration run, functions and app redeployed). GitHub Pages is unpublished. If the V1 Apps Script web app is no longer used, undeploy it; its old URL is in early commits.
 9. Known performance limits (NFR-PRF-05): full history reload and localStorage cache; render-blocking Google Fonts and two synchronous CDN scripts; the service worker rechecks every app file on each launch. Planned fixes are listed in `plan.md`.

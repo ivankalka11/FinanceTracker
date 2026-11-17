@@ -225,13 +225,13 @@ A loan is money taken out of one of the household's accounts, often the joint ac
 | V2.2 | Phone-first PWA with offline queue, hosted on Cloudflare Pages. | Done |
 | V2.3 | In-app scanning: on-device PaddleOCR by default, optional Gemini function. | Done |
 | V2.4 | Monthly ledger closing (draft statement, manual close by the owner, lock, reopen, history). | Done |
-| V2.5 | Plans module with progress and notifications (database, plans screens, in-app bell and notification settings). | Done, except Web Push delivery |
+| V2.5 | Plans module with progress and notifications (database, plans screens, in-app bell and notification settings). | Done (in-app bell only; Web Push dropped) |
 | V2.6 | Plan ledger (add, take out, adjust), gold and stocks inside plans, set-aside and free-to-spend per account, plan section of the statement with prices. | Done (migration run on the live Supabase project) |
 | V2.7 | Sale proceeds go into plan cash; the statement values plan assets at the price of the month's last day. | Done in code (migration `20261120000000_plan_sale_and_month_end.sql` and the `prices` function still have to be deployed) |
 | V2.9 | Loans: lend from an account to a household member, record repayments, list unpaid loans on each month-end statement. | Done (migration `20261122000000_loans.sql` is run on the live project) |
 | V2.10 | Gold price fallback when the Emas API fails; visual refresh (dark burgundy glass theme, matching dropdown menus, calendar and category list). | Done |
-| V2.11 | Security hardening: integrity-checked scripts, tighter headers, function limits, household and member limits. | Done in code; the migration `20261123000000_hardening.sql` and the redeploys still have to be run |
-| Next | Web Push delivery of notifications (VAPID keys, sending function, per-device switch). | Planned |
+| V2.11 | Security hardening: integrity-checked scripts, tighter headers, function limits, household and member limits. | Done and rolled out |
+| Next | Nothing planned. Web Push delivery was considered and dropped; notifications stay in the in-app bell. | Off the roadmap |
 
 ## 14. Approval
 

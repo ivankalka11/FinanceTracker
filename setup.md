@@ -162,7 +162,7 @@ Holding prices are not scheduled. Open the **Portfolio** page and tap **Sync pri
 - **Loans:** Home → Loans (or Settings → Loans). Record money lent from an account (such as Bersama) to a member: amount, the account it leaves, who borrows it, optional due date. Then record repayments into any account. Loans and repayments change balances but are not expense or income, and each monthly statement lists the loans still unpaid at that month's end. Needs `supabase/migrations/20261122000000_loans.sql`.
 - **Plans:** savings goals with a target amount and date. A plan is a set-aside on a real account, with its own ledger (add money, take money out, adjust). Gold and stocks you hold can be assigned to a plan. Each account shows balance, set aside and free to spend.
 - **Monthly closing (owners):** when a month ends, check the figures, enter each account's bank balance, and close it. This saves the statement (printable, CSV export) and locks entries dated in or before that month. An owner can reopen the latest closed month with a reason.
-- **Notifications:** plan milestones (25/50/75/100%), falling behind, deadlines, monthly reminders and month-close reminders. Switch each kind on or off in **Settings → Configuration → Notifications**. Phone push is not built yet; they appear in the in-app bell.
+- **Notifications:** plan milestones (25/50/75/100%), falling behind, deadlines, monthly reminders and month-close reminders. Switch each kind on or off in **Settings → Configuration → Notifications**. They appear in the in-app bell only (phone push is not planned).
 - **Settings:** accounts (add, rename, archive, opening balances), categories, household members (add by email, they must exist as a Supabase user first; up to 10 per household), sign out.
 
 ---

@@ -14,19 +14,17 @@ Supabase is the default database. The phone-first PWA (`pwa/`) is the main front
 | V2.2 | Phone-first PWA with offline queue, hosted on Cloudflare Pages | Done |
 | V2.3 | In-app scanning: on-device PaddleOCR by default, optional Gemini "smart read" | Done |
 | V2.4 | Monthly ledger closing: draft statement, owner closes by hand, lock, reopen, history | Done |
-| V2.5 | Plans, in-app notifications (bell, per-kind switches), `pg_cron` checks at 08:00, 12:00 and 16:00 WIB | Done, except Web Push |
+| V2.5 | Plans, in-app notifications (bell, per-kind switches), `pg_cron` checks at 08:00, 12:00 and 16:00 WIB | Done (in-app bell only; Web Push dropped) |
 | V2.6 | Plan ledger (add, take out, adjust), gold and stocks in plans, set aside and free to spend per account, plan section of the statement | Done; migrations run on the live Supabase project |
 | V2.7 | Sale proceeds go into plan cash; plan assets on the statement valued at the month's last day | Code and tests done; run `20261120000000_plan_sale_and_month_end.sql` on Supabase and redeploy the `prices` function |
 | V2.8 | Notification checks at 08:00, 12:00 and 16:00 WIB; Sync prices button on the Portfolio page | Code done; run `20261121000000_scheduled_jobs.sql` (needs pg_cron) and redeploy the app |
 | V2.9 | Loans: lend from an account to a member, repayments, unpaid loans on each statement | Done; `20261122000000_loans.sql` is run on the live project (the Loans screens load) |
 | V2.10 | Gold price fallback (public price-cards page when the Emas API fails); visual refresh: burgundy dark-glass theme, glass dropdown menus, calendar and category list, animation fixes | Done; redeploy the `prices` function and the app |
-| V2.11 | Security hardening: integrity hashes on CDN scripts, tighter headers pinned to your Supabase host, Edge Function limits and optional origin lock, household and member limits, V1 formula and bot fixes | Code and tests done; see Next |
+| V2.11 | Security hardening: integrity hashes on CDN scripts, tighter headers pinned to your Supabase host, Edge Function limits and optional origin lock, household and member limits, V1 formula and bot fixes | Done; rolled out (sign-ups off, hardening migration run, functions and app redeployed) |
 
 ## Next
 
-1. **Finish the V2.11 rollout:** in Supabase turn off "Allow new users to sign up" (check it is off), run `supabase/migrations/20261123000000_hardening.sql`, optionally `supabase secrets set ALLOWED_ORIGINS=<app address>`, redeploy `prices` and `ocr`, then `python scripts/deploy_pwa.py`.
-2. **Web Push delivery** of notifications: VAPID keys, an Edge Function that sends rows with `sent_at is null`, a `push` handler in `pwa/sw.js`, a push switch per device, and the iPhone "Add to Home Screen" note. `pwa/_headers` must allow the push service endpoints.
-3. **Housekeeping on GitHub:** make sure GitHub Pages is turned off in the repository settings (the sample Jekyll workflow was removed).
+Nothing is committed to next. The V2.11 rollout and the GitHub Pages cleanup are done. Candidates when needed: the scale fixes listed under Decisions made.
 
 ## Decisions made
 
@@ -43,5 +41,6 @@ Supabase is the default database. The phone-first PWA (`pwa/`) is the main front
 ## Parked (off the roadmap)
 
 - Telegram bot as a Supabase webhook (`supabase/functions/telegram`): built, not deployed. Scanning in the app covers the need. Settings row is hidden unless `TELEGRAM_BOT` is set in `pwa/config.js`.
+- Web Push delivery of notifications: decided against; notifications stay in the in-app bell. The `push_subscriptions` table and `save_push_subscription()` stay unused (the table can be dropped later).
 - Sheets mode and the nightly Sheet mirror.
 - Hosting for the V1 bot (Fly.io was the candidate) and the V1 dashboard.
