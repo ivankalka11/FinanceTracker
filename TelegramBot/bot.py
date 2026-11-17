@@ -33,7 +33,7 @@ import pricing   # market-data: gold buyback scrape + IDX stock quotes
 BOT_TOKEN = os.environ["BOT_TOKEN"]          # from @BotFather
 APPS_SCRIPT_URL = os.environ["APPS_SCRIPT_URL"]   # your /exec web app URL
 API_SECRET = os.environ["API_SECRET"]         # must match Code.gs SECRET
-# optional: lock to your account
+# required: only this Telegram user id may use the bot (unset = the bot refuses everyone)
 ALLOWED_USER = os.environ.get("ALLOWED_TELEGRAM_ID", "")
 
 # --- Receipt OCR (optional) ---
@@ -83,9 +83,15 @@ def rupiah(n):
 
 
 def authorized(message):
-    """If ALLOWED_TELEGRAM_ID is set, only that user may use the bot."""
+    """Only ALLOWED_TELEGRAM_ID may use the bot. If it is not set, nobody can: a bot with no
+    owner would let anyone who finds it read and write your sheet."""
     if not ALLOWED_USER:
-        return True
+        try:
+            bot.reply_to(message, "This bot has no owner yet. Put ALLOWED_TELEGRAM_ID="
+                         f"{message.from_user.id} in .env and restart it.")
+        except Exception:
+            pass
+        return False
     return str(message.from_user.id) == str(ALLOWED_USER)
 
 

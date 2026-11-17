@@ -12,7 +12,7 @@ const inRange = (p: number) => p >= 500_000 && p <= 50_000_000;
 // a buyback price, a size and an update date. Returns null if the layout changed.
 export async function goldFromPage(): Promise<{ price: number; date: string } | null> {
   try {
-    const res = await fetch("https://emas.maulanar.my.id/price-cards", { headers: UA });
+    const res = await fetch("https://emas.maulanar.my.id/price-cards", { headers: UA, signal: AbortSignal.timeout(8000) });
     if (!res.ok) return null;
     const html = await res.text();
     for (const card of html.split('price-card-item"').slice(1)) {
@@ -39,7 +39,7 @@ async function goldFromApi(): Promise<{ price: number; date: string } | null> {
   if (!key) return null;
   try {
     const url = "https://emas.maulanar.my.id/api/prices?brand=ANTAM&resource=antam&weight=1";
-    const res = await fetch(url, { headers: { ...UA, "X-API-Key": key } });
+    const res = await fetch(url, { headers: { ...UA, "X-API-Key": key }, signal: AbortSignal.timeout(8000) });
     if (!res.ok) return null; // 429 = usage limit reached, 401/403 = bad key
     const rows = (await res.json()).data ?? [];
     for (const row of rows) {
@@ -59,7 +59,7 @@ export async function stockPrice(ticker: string): Promise<number | null> {
   try {
     const res = await fetch(
       `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?interval=1d&range=1d`,
-      { headers: UA },
+      { headers: UA, signal: AbortSignal.timeout(8000) },
     );
     const price = (await res.json())?.chart?.result?.[0]?.meta?.regularMarketPrice;
     return typeof price === "number" ? price : null;
@@ -99,7 +99,7 @@ async function goldOnFromApi(date: string): Promise<{ price: number; date: strin
     try {
       const url = "https://emas.maulanar.my.id/api/prices?brand=ANTAM&resource=antam&weight=1" +
         `&updated_at[eq]=${day}&sort_by=updated_at&order=desc&limit=5`;
-      const res = await fetch(url, { headers: { ...UA, "X-API-Key": key } });
+      const res = await fetch(url, { headers: { ...UA, "X-API-Key": key }, signal: AbortSignal.timeout(8000) });
       if (!res.ok) return null; // limit reached or bad key: stop, let the caller fall back
       const rows = (await res.json()).data ?? [];
       for (const row of rows) {
@@ -120,7 +120,7 @@ export async function stockPriceOn(ticker: string, date: string): Promise<{ pric
     const res = await fetch(
       `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}` +
         `?interval=1d&period1=${Math.floor((end - 10 * DAY) / 1000)}&period2=${Math.floor((end + 2 * DAY) / 1000)}`,
-      { headers: UA },
+      { headers: UA, signal: AbortSignal.timeout(8000) },
     );
     const r = (await res.json())?.chart?.result?.[0];
     const times: number[] = r?.timestamp ?? [];

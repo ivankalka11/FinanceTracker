@@ -116,6 +116,18 @@ npx supabase functions deploy ocr
 
 It is limited to 30 smart reads per user per day (change `v_limit` in the `use_ocr_scan` function to adjust). Google's free tier may use submitted images to improve its products, so this applies to smart read only.
 
+**Lock the functions to your app (recommended).** By default `prices` and `ocr` answer browsers on any origin (they still need a signed-in user's token). To accept only your app, set its address and redeploy:
+
+```bash
+npx supabase secrets set ALLOWED_ORIGINS=https://YOUR-PROJECT.pages.dev
+npx supabase functions deploy prices
+npx supabase functions deploy ocr
+```
+
+`prices` also allows each user 20 requests a minute. After any change to `supabase/functions/_shared/`, redeploy `prices`, `ocr` and `telegram`.
+
+**Existing projects: run the hardening migration.** In the SQL Editor, run `supabase/migrations/20261123000000_hardening.sql` once. It limits households per user (3) and members per household (10), and locks down internal helper functions. New projects get it from `setup_all.sql`. It does not replace turning sign-ups off (step above): with sign-ups on, anyone could create an account.
+
 **Bring your data from the old Google Sheet version.** Add `SUPABASE_SECRET_KEY` and `APPS_SCRIPT_URL` / `API_SECRET` to `.env`, then preview and run (safe to repeat):
 
 ```bash

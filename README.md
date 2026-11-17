@@ -89,6 +89,7 @@ This repository is public. It must never hold a real secret.
 - **Git-ignored, never committed:** `.env`, `pwa/config.js`, `Dashboard/config.js`, `pwa/models/`, `supabase/.temp/`, and `.claude/settings*.json`. Only `.env.example` (empty values) is tracked.
 - **Safe in the browser:** `SUPABASE_URL` and `SUPABASE_PUBLISHABLE_KEY`. Row-level security protects the data, and sign-ups are turned off so people join by invite only.
 - **Server-side only:** `SUPABASE_SECRET_KEY` (bypasses security), `BOT_TOKEN`, `GEMINI_API_KEY`, `EMAS_API_KEY`, `ANTHROPIC_API_KEY`, `TELEGRAM_WEBHOOK_SECRET`. Edge Function keys are stored with `supabase secrets set`, not in files.
+- **Hardening in place:** the two CDN scripts carry `integrity=` hashes (update them when a version changes), `pwa/_headers` sets the content security policy, HSTS and COOP, and `scripts/deploy_pwa.py` pins the policy's Supabase host to your own project in the uploaded copy. The V1 bot refuses everyone until `ALLOWED_TELEGRAM_ID` is set, and V1 sheet writes neutralise text that starts with `=`, `+`, `-` or `@`.
 - If a secret is ever committed, rotate it first (removing it from history does not undo the exposure); see the Security section of [`setup.md`](setup.md).
 
 ---

@@ -8,9 +8,12 @@ Usage (from the project root):
 """
 import os
 import re
+import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
+from urllib.parse import urlparse
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "TelegramBot"))
@@ -47,10 +50,22 @@ def main() -> int:
     # For a new project, fix the production branch up front (fails harmlessly if it exists).
     subprocess.run(f"npx wrangler pages project create {project} --production-branch {branch}",
                    cwd=ROOT, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    command = f"npx wrangler pages deploy pwa --project-name {project} --branch {branch} --commit-dirty=true"
-    print(f"> {command}")
-    return subprocess.run(command, cwd=ROOT, shell=True).returncode
-
+    # Upload a copy whose _headers names this project's Supabase host instead of any *.supabase.co.
+    host = (urlparse(os.environ.get("SUPABASE_URL", "").strip()).hostname or "").lower()
+    pin = bool(re.fullmatch(r"[a-z0-9-]+\.supabase\.co", host))
+    if not pin:
+        print("SUPABASE_URL is missing or not a *.supabase.co address: the policy keeps allowing any Supabase project.")
+    with tempfile.TemporaryDirectory() as tmp:
+        site = Path(tmp) / "pwa"
+        shutil.copytree(ROOT / "pwa", site)
+        if pin:
+            headers = site / "_headers"
+            text = headers.read_text(encoding="utf-8")
+            text = text.replace("https://*.supabase.co", f"https://{host}").replace("wss://*.supabase.co", f"wss://{host}")
+            headers.write_text(text, encoding="utf-8", newline="\n")
+        command = f'npx wrangler pages deploy "{site}" --project-name {project} --branch {branch} --commit-dirty=true'
+        print(f"> {command}")
+        return subprocess.run(command, cwd=ROOT, shell=True).returncode
 
 if __name__ == "__main__":
     sys.exit(main())

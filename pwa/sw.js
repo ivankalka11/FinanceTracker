@@ -1,7 +1,7 @@
 /* Service worker: caches the app shell so the PWA opens offline.
    Data requests to Supabase are never cached here; the app keeps its own
    last-known copy and an offline queue. Bump VERSION on every release. */
-const VERSION = "ft-v2.10.2";
+const VERSION = "ft-v2.11.0";
 const SHELL = [
   "./",
   "index.html",
@@ -23,7 +23,10 @@ self.addEventListener("install", (event) => {
   event.waitUntil(
     caches.open(VERSION)
       // one missing file must not block install
-      .then((cache) => Promise.all(SHELL.map((url) => cache.add(url).catch(() => {}))))
+      // CDN files are fetched in CORS mode: the page loads them with integrity=, and an
+      // opaque (no-cors) cached copy cannot answer a CORS request.
+      .then((cache) => Promise.all(SHELL.map((url) =>
+        cache.add(url.startsWith("https://") ? new Request(url, { mode: "cors" }) : url).catch(() => {}))))
       .then(() => self.skipWaiting())
   );
 });

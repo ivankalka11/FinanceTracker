@@ -9,16 +9,26 @@
 // Response: { "gold": { "price": 1234567, "date": "..." } | null, "stocks": { "BBCA": 9500 },
 //             "stockDates": { "BBCA": "2026-10-30" } }  (stockDates only with "date")
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { corsFor } from "../_shared/cors.ts";
 import { goldBuyback, goldBuybackOn, stockPrice, stockPriceOn } from "../_shared/prices.ts";
 
-const cors = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+// Best-effort limit per signed-in user (kept in this instance's memory): every call can
+// trigger several outbound price lookups, and the Emas API key has a usage cap.
+const WINDOW_MS = 60_000, MAX_CALLS = 20;
+const calls = new Map<string, { n: number; reset: number }>();
+const limited = (uid: string) => {
+  const now = Date.now();
+  for (const [k, v] of calls) if (v.reset < now) calls.delete(k);
+  const c = calls.get(uid) ?? { n: 0, reset: now + WINDOW_MS };
+  c.n++;
+  calls.set(uid, c);
+  return c.n > MAX_CALLS;
 };
-const json = (body: unknown, status = 200) =>
-  new Response(JSON.stringify(body), { status, headers: { ...cors, "Content-Type": "application/json" } });
 
 Deno.serve(async (req) => {
+  const cors = corsFor(req);
+  const json = (body: unknown, status = 200) =>
+    new Response(JSON.stringify(body), { status, headers: { ...cors, "Content-Type": "application/json" } });
   if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
 
   // Only signed-in users: check the caller's token against Supabase Auth.
@@ -26,6 +36,7 @@ Deno.serve(async (req) => {
   const supabase = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_ANON_KEY")!);
   const { data, error } = await supabase.auth.getUser(token);
   if (error || !data.user) return json({ error: "Not signed in" }, 401);
+  if (limited(data.user.id)) return json({ error: "Too many price requests. Try again in a minute." }, 429);
 
   let body: { tickers?: unknown; gold?: unknown; date?: unknown } = {};
   try { body = await req.json(); } catch (_) { /* empty body */ }

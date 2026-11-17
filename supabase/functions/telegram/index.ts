@@ -19,6 +19,13 @@ import { goldBuyback, stockPrice } from "../_shared/prices.ts";
 
 const TOKEN = Deno.env.get("TELEGRAM_BOT_TOKEN") ?? "";
 const WEBHOOK_SECRET = Deno.env.get("TELEGRAM_WEBHOOK_SECRET") ?? "";
+// Compare in constant time so the secret cannot be guessed from response timing.
+const sameSecret = (a: string, b: string) => {
+  const x = new TextEncoder().encode(a), y = new TextEncoder().encode(b);
+  let diff = x.length ^ y.length;
+  for (let i = 0; i < Math.max(x.length, y.length); i++) diff |= (x[i] ?? 0) ^ (y[i] ?? 0);
+  return diff === 0;
+};
 const db = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!, {
   auth: { persistSession: false },
 });
@@ -538,7 +545,7 @@ async function tryLink(chat: number, tgUser: number, text: string): Promise<void
 // ------------------------------------------------------------ entry point
 Deno.serve(async (req) => {
   if (req.method !== "POST") return new Response("ok");
-  if (!TOKEN || !WEBHOOK_SECRET || req.headers.get("X-Telegram-Bot-Api-Secret-Token") !== WEBHOOK_SECRET) {
+  if (!TOKEN || !WEBHOOK_SECRET || !sameSecret(req.headers.get("X-Telegram-Bot-Api-Secret-Token") ?? "", WEBHOOK_SECRET)) {
     return new Response("forbidden", { status: 403 });
   }
 
