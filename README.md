@@ -16,7 +16,8 @@ To run your own copy, follow [`setup.md`](setup.md) (about 30 minutes). What is 
 - **Plans**: savings goals with a target amount and date. A plan is a set-aside on a real account, with its own ledger (add, take out, adjust), and can include gold and stocks you already hold. Each account shows balance, set aside and free to spend.
 - **Loans**: lend money from an account (for example Bersama) to Ivan or Mely and record their repayments back into an account. Loans are not expenses and repayments are not income; each monthly statement lists the loans still unpaid at month end.
 - **Notifications**: plan milestones, falling behind, deadlines and month-close reminders, in an in-app bell with per-kind switches. Phone push delivery is not built yet.
-- **Households**: invite members by email; owners and members have different rights.
+- **Households**: invite members by email (up to 10 per household, 3 households per user); owners and members have different rights.
+- **Look and feel**: a dark burgundy theme with translucent glass pages and sheets, glass dropdown menus and calendar, and motion that follows your touch (off under reduced-motion).
 
 ---
 
@@ -39,7 +40,7 @@ The app talks straight to Supabase with the signed-in user's session. Every tabl
 | Database and auth | Supabase (Postgres, magic-link or password sign-in) |
 | App | HTML, CSS, vanilla JS, Chart.js, no build step (`pwa/`) |
 | Scanning | PaddleOCR on the device (ONNX runtime); optional Gemini function |
-| Prices | Emas API ID (Antam buyback), Yahoo Finance (IDX `.JK`), via a Supabase function |
+| Prices | Emas API ID (Antam buyback; if it fails, the public price-cards page), Yahoo Finance (IDX `.JK`), via a Supabase function |
 | Hosting | Cloudflare Pages (`scripts/deploy_pwa.py`) |
 
 ---
@@ -75,8 +76,8 @@ pwa/                 V2 app (index.html, app.js, styles.css, sw.js, receipt-pars
 supabase/migrations/ database schema, security rules and functions, in order
 supabase/functions/  Edge Functions: prices, ocr, and the shelved telegram webhook
 scripts/             config build, Cloudflare deploy, OCR model fetch, Sheet import
-tests/               parser tests and SQL tests
-docs/                BRD.md (business requirements) and SRS.md (software requirements)
+tests/               parser tests and SQL tests (ledger, plans, loans, hardening)
+docs/                BRD.md (business requirements), SRS.md (software requirements), V1-setup.md (legacy setup)
 Dashboard/, TelegramBot/, code.gs   legacy V1 (Google Sheet backend), see docs/V1-setup.md
 ```
 

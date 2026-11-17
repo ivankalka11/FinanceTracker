@@ -72,7 +72,7 @@ BOT_TOKEN=your_telegram_bot_token
 APPS_SCRIPT_URL=https://script.google.com/macros/s/XXXX/exec
 API_SECRET=your_chosen_secret          # must match SECRET in Code.gs
 
-# optional: lock the bot to only your Telegram user id (leave blank = open)
+# required: only this Telegram user id may use the bot (blank = the bot refuses everyone and replies with your id so you can paste it here)
 ALLOWED_TELEGRAM_ID=
 
 # OCR

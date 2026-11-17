@@ -85,7 +85,7 @@ CLOUDFLARE_PAGES_PROJECT=my-finance
 python scripts/deploy_pwa.py
 ```
 
-The script builds the config, downloads the on-device scanning models, and uploads the `pwa` folder. It prints the final address (Cloudflare adds a suffix if the name is taken).
+The script builds the config, downloads the on-device scanning models, and uploads a copy of the `pwa` folder whose security headers allow only **your** Supabase project (taken from `SUPABASE_URL` in `.env`). It prints the final address (Cloudflare adds a suffix if the name is taken).
 
 4. In Supabase, open **Authentication → URL Configuration** and set **Site URL** to that address (also add it under **Redirect URLs**). This makes the "Email me a sign-in link" button work; password sign-in works without it.
 5. On your phone, open the address, sign in, and choose **Add to Home Screen**.
@@ -105,7 +105,7 @@ npx supabase secrets set EMAS_API_KEY=your_emas_key
 npx supabase functions deploy prices
 ```
 
-Gold uses the official Antam buyback price (Emas API ID); stocks use Yahoo Finance with `.JK` added for IDX, about 15 minutes delayed.
+Gold uses the official Antam buyback price (Emas API ID). If the key is missing, over its limit or failing, the function falls back to the public price-cards page and the app still shows a price. Stocks use Yahoo Finance with `.JK` added for IDX, about 15 minutes delayed. Each user may ask for prices 20 times a minute.
 
 **Smart read for scanning.** Scanning works on the device with no key (PaddleOCR; the photo never leaves your phone). If a photo reads badly, "Try smart read" sends it to Google Gemini. To turn that on:
 
@@ -124,7 +124,7 @@ npx supabase functions deploy prices
 npx supabase functions deploy ocr
 ```
 
-`prices` also allows each user 20 requests a minute. After any change to `supabase/functions/_shared/`, redeploy `prices`, `ocr` and `telegram`.
+After any change to `supabase/functions/_shared/`, redeploy `prices` and `ocr` (and `telegram` if you deployed it; it is parked by default).
 
 **Existing projects: run the hardening migration.** In the SQL Editor, run `supabase/migrations/20261123000000_hardening.sql` once. It limits households per user (3) and members per household (10), and locks down internal helper functions. New projects get it from `setup_all.sql`. It does not replace turning sign-ups off (step above): with sign-ups on, anyone could create an account.
 
@@ -163,7 +163,7 @@ Holding prices are not scheduled. Open the **Portfolio** page and tap **Sync pri
 - **Plans:** savings goals with a target amount and date. A plan is a set-aside on a real account, with its own ledger (add money, take money out, adjust). Gold and stocks you hold can be assigned to a plan. Each account shows balance, set aside and free to spend.
 - **Monthly closing (owners):** when a month ends, check the figures, enter each account's bank balance, and close it. This saves the statement (printable, CSV export) and locks entries dated in or before that month. An owner can reopen the latest closed month with a reason.
 - **Notifications:** plan milestones (25/50/75/100%), falling behind, deadlines, monthly reminders and month-close reminders. Switch each kind on or off in **Settings → Configuration → Notifications**. Phone push is not built yet; they appear in the in-app bell.
-- **Settings:** accounts (add, rename, archive, opening balances), categories, household members (add by email, they must exist as a Supabase user first), sign out.
+- **Settings:** accounts (add, rename, archive, opening balances), categories, household members (add by email, they must exist as a Supabase user first; up to 10 per household), sign out.
 
 ---
 

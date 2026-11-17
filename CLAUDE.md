@@ -1,6 +1,6 @@
 # FinanceTracker
 
-Self-hosted personal finance system for an Indonesian household. One Google Sheet is the database; a Google Apps Script web app is the only thing that reads or writes it; a web dashboard and a Telegram bot are the two front-ends.
+Self-hosted personal finance system for an Indonesian household. **V2 is current:** Supabase (Postgres with row-level security, Auth, Edge Functions) is the database and the phone-first PWA in `pwa/` (hosted on Cloudflare Pages) is the app. **V1 is legacy:** one Google Sheet read and written only by a Google Apps Script web app, with a web dashboard and a Telegram bot as front-ends. V1 still works but is not developed; the V1 sections below are marked as such.
 
 ## Goals
 
@@ -13,6 +13,19 @@ Self-hosted personal finance system for an Indonesian household. One Google Shee
 - The GitHub repo is public: it must never hold a real secret (see Working rules).
 
 ## Architecture and flow
+
+**V2 (current)**
+
+```
+PWA (Cloudflare Pages) ──► Supabase Auth + Postgres (RLS, RPCs)
+   ├──► Edge Function prices ──► Emas API ID (page fallback), Yahoo Finance
+   ├──► Edge Function ocr ─────► Gemini (optional "smart read")
+   └──► on-device OCR (PaddleOCR in a Web Worker)
+```
+
+The app talks to Supabase with the signed-in user's session; every table has a `household_id` and RLS decides access. Details of each V2 phase are under "V2 upgrade" below.
+
+**V1 (legacy)**
 
 ```
 Telegram Bot ─┐
@@ -37,20 +50,24 @@ Dashboard ────┘
   - Stocks: Yahoo Finance with `.JK` appended automatically, about 15 minutes delayed.
 - **Config:** one root `.env` serves both front-ends. The bot loads it through `TelegramBot/env_loader.py`; `scripts/build_dashboard_config.py` writes `Dashboard/config.js` containing only `APPS_SCRIPT_URL` and `API_SECRET`.
 
-## Features
+## Features (V1; V2 features are listed in README.md)
 
 - **Dashboard:** add/delete transactions, holdings and transfers; per-account balances; expenses-by-category chart; searchable, filterable, sortable, paginated transaction table.
 - **Telegram bot commands:** `/add`, `/payslip`, `/history`, `/portfolio`, `/sell`, `/realized`, `/accounts`, `/transfer`, `/summary`, `/recent`, plus sending a receipt photo directly.
 - **OCR import:** receipts → expenses, payslips → income, history screenshots → reviewed bulk import.
 - **Investments:** weighted-average positions, sell tracking, realized and unrealized P&L.
 - **Multi-account:** balances per account and transfers between them.
-- **Access control:** `API_SECRET` on the API; optional `ALLOWED_TELEGRAM_ID` locks the bot to one user.
+- **Access control (V1):** `API_SECRET` on the API; `ALLOWED_TELEGRAM_ID` is required: the bot refuses everyone while it is unset. Sheet writes in `code.gs` go through `safeCell_()`, which stores text starting with `= + - @` as plain text.
 
 ## Tech used
 
 | Part | Tech |
 | --- | --- |
-| Database | Google Sheets |
+| V2 database and auth | Supabase (Postgres, RLS, magic-link or password sign-in) |
+| V2 app | `pwa/`: HTML, CSS, vanilla JS (no build step), service worker, Chart.js |
+| V2 hosting | Cloudflare Pages (`scripts/deploy_pwa.py`) |
+| V2 functions | Deno / TypeScript Edge Functions in `supabase/functions/` |
+| V1 database | Google Sheets |
 | Backend/API | Google Apps Script web app (`code.gs`) |
 | Dashboard | HTML, CSS, vanilla JS, Chart.js (`Dashboard/`) |
 | Bot | Python 3.12.7, pyTelegramBotAPI, requests, beautifulsoup4 (`TelegramBot/`) |
@@ -60,6 +77,15 @@ Dashboard ────┘
 | CI | None (the sample Jekyll workflow was removed); the PWA deploys to Cloudflare Pages with `scripts/deploy_pwa.py` |
 
 ## Key files
+
+V2:
+
+- `pwa/app.js`, `pwa/styles.css`, `pwa/sw.js`, `pwa/index.html`, `pwa/_headers`: the app, its styles, service worker, shell and security headers.
+- `supabase/migrations/`: schema, RLS and RPCs in order; `supabase/setup_all.sql` is all of them in one file (rebuild with `python scripts/build_supabase_setup.py`).
+- `supabase/functions/`: `prices`, `ocr`, parked `telegram`, and `_shared/` (`gemini.ts`, `prices.ts`, `cors.ts`).
+- `tests/sql/` (run with `sh tests/sql/run.sh`, needs Docker; suites: ledger, plans, plan ledger, loans, hardening) and `tests/receipt_parser_test.js`.
+
+V1 (legacy):
 
 - `code.gs`: the whole backend. Changes only take effect after redeploying the Apps Script web app.
 - `TelegramBot/bot.py`: commands, OCR, review cards, API wrappers (`api_add`, `api_transfer`, `api_sell`, ...).
@@ -87,7 +113,8 @@ Target: Supabase as the default database (Google Sheet kept as a second source a
 - V2.8: `supabase/migrations/20261121000000_scheduled_jobs.sql` reschedules the notification checks to 08:00, 12:00 and 16:00 WIB (the last-day month-close reminder now starts at 16:00). Holding prices are not scheduled: the Portfolio page has a **Sync prices** button (`actions["sync-prices"]`, `loadPrices(manual)`, `S.pricesAt`).
 - V2.5 notifications app (done): `S.notifs` / `S.prefs` load in `refresh()`; `runChecks()` calls `check_notifications` on start and when the app becomes visible again (at most every 30 min); `listenNotifs()` subscribes to Realtime inserts for this user; bell on Home (`paintBell()`, `#bell-count`), `sheetNotifications()`, `openNotifLink()` (`plan:<id>`, `statement:<YYYY-MM-01>`); actions `notifs`, `notif`, `notifs-read`, `notifs-clear`; Settings → Configuration → Notifications screen (route `notifications`, `viewNotifSettings()`) with switches from `NOTIF_GROUPS` (one switch can cover several kinds; `prefOn()` gives the owner-on / member-off default).
 - V2.5 still to do: Web Push (`push_subscriptions` + VAPID + an Edge Function sending rows with `sent_at is null`, a `push` handler in `sw.js`, a push switch per device, the iPhone home-screen note). The Telegram webhook, Sheets mode and V1 hosting are off the roadmap.
-- V2.9 loans (code and tests done, migration pending): `supabase/migrations/20261122000000_loans.sql`. Money lent from a household account (e.g. Bersama) to a member: `loans` table plus transactions of type `loan-out` (the money leaving the account) and `loan-in` (a repayment coming back) carrying `loan_id`; not income or expense. Loan rows are written only by `add_loan`, `update_loan`, `delete_loan`, `add_loan_payment`, `delete_loan_payment` (a trigger refuses direct writes unless the transaction-local setting `ft.loan` is set). `period_figures_base` now includes `loan_in`/`loan_out` and `private.period_figures` adds `loans` + `loans_outstanding` (unpaid at month end); a trigger stores them in `ledger_closings.loans`. `household_members()` gives member emails for the borrower picker. In `pwa/app.js`: `S.loans` / `S.memberEmails` / `S.loansReady`, helpers `loanStats()` / `openLoans()` / `totalOwed()`, route `loans` (`viewLoans`, Home card `homeLoans()`), `sheetLoanForm` / `sheetLoan` / `sheetLoanPay`, `forms.loan` / `forms.loanpay`, actions `loan-*`, statement section in `statementBody`. Loans need a connection (not in the offline queue); the app refuses to lend more than the account holds. Run `python scripts/build_supabase_setup.py` after migration changes.
+- V2.9 loans (migration run on the live project; the Loans screens load in the app): `supabase/migrations/20261122000000_loans.sql`. Money lent from a household account (e.g. Bersama) to a member: `loans` table plus transactions of type `loan-out` (the money leaving the account) and `loan-in` (a repayment coming back) carrying `loan_id`; not income or expense. Loan rows are written only by `add_loan`, `update_loan`, `delete_loan`, `add_loan_payment`, `delete_loan_payment` (a trigger refuses direct writes unless the transaction-local setting `ft.loan` is set). `period_figures_base` now includes `loan_in`/`loan_out` and `private.period_figures` adds `loans` + `loans_outstanding` (unpaid at month end); a trigger stores them in `ledger_closings.loans`. `household_members()` gives member emails for the borrower picker. In `pwa/app.js`: `S.loans` / `S.memberEmails` / `S.loansReady`, helpers `loanStats()` / `openLoans()` / `totalOwed()`, route `loans` (`viewLoans`, Home card `homeLoans()`), `sheetLoanForm` / `sheetLoan` / `sheetLoanPay`, `forms.loan` / `forms.loanpay`, actions `loan-*`, statement section in `statementBody`. Loans need a connection (not in the offline queue); the app refuses to lend more than the account holds. Run `python scripts/build_supabase_setup.py` after migration changes.
+- Design system (V2.10): accent burgundy `#b23455` (press `#8f2742`) on a warm wine-black canvas `#130a0e`; tokens are `:root` variables at the top of `pwa/styles.css`. Pages (`.sheet`) and modals (`.modal`) are translucent dark glass: both override `--ink`, `--ink-muted`, `--rule`, `--wash`, `--sheet`, `--g-tile`, `--green`, `--red` and `--accent-press` so new content follows automatically, and the "page glass" / "modal glass" blocks at the end of the file fix controls that hard-code light colors (chips, ghost pills, logo tiles, tags, danger buttons). Blur (`backdrop-filter`) is used only on the nav, modals, toast and pickers: not on pages, and tiles lose it while they move (`.enter`, `html[data-vt]`). Text links (`.link`) are dark-burgundy buttons. Plain modals close with a CSS slide on the live element (class `closing` on `.overlay`, in `closeSheet()`), because a View Transition snapshot drops the blur; only sheets grown from a row use the "hero" transition, and during it the nav and page lose their `view-transition-name` so they stay in the root layer. Pickers are our own, because native popups cannot be styled: selects use `appearance: base-select` where supported (native picker elsewhere), `enhanceCombos()` replaces a `<datalist>` with `.combo-list`, and `enhanceDates()` makes `type="date"` fields read-only and opens the `.cal` calendar (it enforces `min`/`max` and a required value on submit). Check a visual change on the Home, Overview, Portfolio and Settings pages and in a modal.
 - Security hardening (audit follow-up): `pwa/index.html` loads supabase-js and chart.js with `integrity=` + `crossorigin="anonymous"`; when a pinned version changes, recompute the sha384 hash. `pwa/sw.js` caches those CDN files with a CORS-mode request (an opaque copy cannot satisfy an integrity-checked script). `supabase/migrations/20261123000000_hardening.sql` (household/member limits, `private` helpers revoked; test `tests/sql/hardening_test.sql`). `supabase/functions/_shared/cors.ts` reads the optional `ALLOWED_ORIGINS` secret; `prices` limits each user to 20 calls a minute and every outbound fetch in `_shared/prices.ts` has an 8 s timeout. V1: `code.gs` `safeCell_()` prefixes `'` to text starting with `= + - @`; `bot.py` `authorized()` refuses everyone when `ALLOWED_TELEGRAM_ID` is unset. Public sign-ups must be off in Supabase (the app cannot enforce that).
 - Hosting: `python scripts/deploy_pwa.py` (uploads a temp copy whose `_headers` pins `connect-src` to the host in `SUPABASE_URL`) uploads `pwa/` to Cloudflare Pages (`CLOUDFLARE_PAGES_PROJECT` in `.env`); `pwa/_headers` carries the content security policy, so new external hosts must be added there.
 - Run locally with the `pwa` launch config (port 5173).

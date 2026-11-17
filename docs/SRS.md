@@ -1,8 +1,8 @@
 # Software Requirements Specification (SRS)
 
 **Project:** FinanceTracker
-**Document version:** 1.1 (adds Loans, V2.9)
-**Date:** 2026-11-16
+**Document version:** 1.2 (adds the gold price fallback, visual design, pickers and security hardening, V2.10 and V2.11)
+**Date:** 2026-11-17
 **Related:** [BRD.md](BRD.md), [../README.md](../README.md), [../setup.md](../setup.md)
 
 ---
@@ -90,7 +90,7 @@ Google Sheet ◄── nightly mirror / Sheets mode (planned)
 | Owner (V2) | Everything a member can do, plus rename or delete the household and add or remove members. |
 | Member (V2) | Read and write all household data: transactions, accounts, categories, holdings, sales. |
 | Holder of `API_SECRET` (V1) | Full read and write through the Apps Script API. |
-| Telegram user (V1) | Full access through the bot; limited to `ALLOWED_TELEGRAM_ID` when set. |
+| Telegram user (V1) | Full access through the bot, limited to `ALLOWED_TELEGRAM_ID`; the bot refuses everyone while it is unset. |
 
 ### 2.4 Operating environment
 
@@ -101,7 +101,7 @@ Google Sheet ◄── nightly mirror / Sheets mode (planned)
 ### 2.5 Design constraints
 
 - C-1: Free tiers only (BR-18).
-- C-2: The PWA has no build step; libraries are pinned versions from jsDelivr.
+- C-2: The PWA has no build step; libraries are pinned versions from jsDelivr, and supabase-js and Chart.js are loaded with integrity hashes (update the hash when the version changes).
 - C-3: Price lookups happen server-side only, never from the browser.
 - C-4: V1 writes are `POST` with a JSON body sent as `text/plain`, because Apps Script does not answer CORS preflights.
 - C-5: V1 backend changes take effect only after redeploying the Apps Script web app.
@@ -180,6 +180,8 @@ Priority: **M** must, **S** should, **C** could. "Version" says where the requir
 | FR-PRC-03 | Prices are fetched only by the bot, Apps Script or the `prices` Edge Function, never from the browser. | M | V1, V2 | C-3 |
 | FR-PRC-04 | `TelegramBot/diagnose.py` checks gold-pricing connectivity. | C | V1 | BR-09 |
 | FR-PRC-05 | The Portfolio page has a **Sync prices** button that asks the `prices` function again for the held stocks and gold, shows when prices were last updated, and says if the gold or a stock price could not be fetched. Prices also load when the app opens. Taps within 15 seconds of an update are ignored to protect the gold API's rate limit. | S | V2.8 | BR-09 |
+| FR-PRC-06 | When the Emas API key is missing, over its usage limit (HTTP 429) or failing, gold falls back to the public price-cards page (the official `antam` 1 g card): `scripts/gold_scraper.py` for the V1 bot, `goldFromPage()` in `_shared/prices.ts` for the Edge Functions. For a past day the page counts only if it was published on or before that day and within 7 days. The Python fallback reports `fallback_reason`. | S | V2.10 | BR-09 |
+| FR-PRC-07 | The `prices` function answers signed-in users only, allows each user 20 calls a minute, and gives every outbound lookup an 8-second timeout. | S | V2.11 | BR-09 |
 
 ### 3.7 Reports
 
@@ -348,14 +350,14 @@ All calls go to the `/exec` URL with `?action=...` and the shared secret.
 
 | Name | Kind | Purpose |
 | --- | --- | --- |
-| `create_household(p_name, p_accounts)` | RPC | New household, owner membership, initial accounts. |
-| `add_member_by_email(p_household, p_email)` | RPC | Owner adds an existing user. |
+| `create_household(p_name, p_accounts)` | RPC | New household, owner membership, initial accounts. Refused past 3 households per user, a name over 80 characters, more than 30 accounts or an account name over 60 characters. |
+| `add_member_by_email(p_household, p_email)` | RPC | Owner adds an existing user; refused past 10 members. An unknown address gets a generic message, which does not hide whether an account exists, so public sign-ups must be off. |
 | `add_transfer(p_household, p_from, p_to, p_amount, p_date, p_note, p_source)` | RPC | Atomic two-leg transfer. |
 | `sell_holding(p_household, p_quantity, p_sell_price, p_account, p_holding, p_ticker, p_name, p_date, p_source)` | RPC | Sale across lots, sale record, proceeds transaction. |
 | `use_ocr_scan()` / `use_ocr_scan_for(p_user)` | RPC | Count a smart scan; refuse past 30 a day. |
 | `create_telegram_link_code(p_household)` | RPC | One-time bot link code. |
-| `prices` | Edge Function | Current gold and stock prices for the household's holdings. |
-| `ocr` | Edge Function | Gemini-based scan of a photo. |
+| `prices` | Edge Function | Current gold and stock prices for the household's holdings, or for a past `date`. Signed-in users only, 20 calls a minute per user, 8-second timeouts, gold page fallback (FR-PRC-06). |
+| `ocr` | Edge Function | Gemini-based scan of a photo. Signed-in users only, 30 a day. `prices` and `ocr` answer only the origins in the optional `ALLOWED_ORIGINS` secret (any origin when it is unset). |
 | `telegram` | Edge Function | Bot webhook (shelved). |
 | `close_period(p_household, p_month, p_bank, p_notes, p_note, p_portfolio_value, p_unrealized)` | RPC | Owner-only month close: checks bank balances, stores the snapshot, locks the month. |
 | `reopen_period(p_household, p_month, p_reason)` | RPC | Owner-only reopen of the latest closed month, logged. |
@@ -445,7 +447,8 @@ Google Sheet tabs: `Transactions`, `Holdings`, `Realized`. Columns mirror the V2
 
 ### 5.1 User interfaces
 
-- **V2 PWA:** phone-first, bottom navigation with Home, Activity, Stats, Portfolio and Settings. Forms open as bottom sheets (add, scan, transfer, transaction, account, category, member, holding, position, Telegram). Login and onboarding screens precede the main app.
+- **V2 PWA:** phone-first, bottom navigation with Home, Overview, Scan (centre), Portfolio and Settings. Activity, Plans, Loans, Monthly statements and Notifications open from Home or Settings. Forms open as bottom sheets (add, scan, transfer, transaction, account, category, member, holding, position, plan, loan, Telegram). Login and onboarding screens precede the main app.
+- **Look and feel (V2.10):** a dark burgundy theme on a warm near-black canvas. Pages and sheets are translucent dark glass with white text; blur is used only on the navigation bar, sheets, the toast and pickers. Text links are small dark-burgundy buttons. Dropdown menus, the category suggestion list and the date calendar are glass panels of the app's own (selects use the browser's customizable select where supported and its native picker elsewhere). Date fields are picked from the calendar, not typed.
 - **Monthly statements (V2):** Settings → Monthly statements lists every month with its status (running, ready to close, closed, locked). A month opens as a statement sheet: summary, accounts, expenses by category, checklist, then either the close form (bank balance per account, two-tap confirm) or, when closed, print/PDF, CSV export, reopen with a reason, and the close/reopen history. Owners see a "Close <month>" card on Home when one is due. Locked entries show no Edit or Delete, and date pickers start after the locked month.
 - **V1 dashboard:** single page with forms for transactions, holdings and transfers; account balances; category chart; transaction table.
 - **Telegram bot:** text commands, inline keyboards for account and category choice, review cards for history imports.
@@ -461,7 +464,9 @@ Google Sheet tabs: `Transactions`, `Holdings`, `Realized`. Columns mirror the V2
 | Anthropic API | Optional V1 OCR provider | API key |
 | Emas API ID | Antam buyback price | `EMAS_API_KEY` |
 | Yahoo Finance | IDX stock price | None |
-| jsDelivr | PaddleOCR, onnxruntime-web, Chart.js | None (pinned versions) |
+| jsDelivr | supabase-js, Chart.js, PaddleOCR, onnxruntime-web | None (pinned versions; supabase-js and Chart.js are integrity-checked) |
+| Emas price-cards page | Gold fallback when the Emas API is unavailable | None |
+| Google Fonts | Plus Jakarta Sans typeface | None |
 | Cloudflare Pages | PWA hosting | Deploy token |
 
 ### 5.3 Configuration
@@ -470,7 +475,7 @@ Google Sheet tabs: `Transactions`, `Holdings`, `Realized`. Columns mirror the V2
 - `scripts/build_dashboard_config.py` writes `Dashboard/config.js` (`APPS_SCRIPT_URL`, `API_SECRET` only).
 - `scripts/build_pwa_config.py` writes the git-ignored `pwa/config.js` (`SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY`, optional `TELEGRAM_BOT`) and PNG icons.
 - `scripts/fetch_ocr_models.py` downloads the OCR models into the git-ignored `pwa/models/`.
-- `scripts/deploy_pwa.py` uploads `pwa/` to the Cloudflare Pages project named by `CLOUDFLARE_PAGES_PROJECT`.
+- `scripts/deploy_pwa.py` uploads `pwa/` to the Cloudflare Pages project named by `CLOUDFLARE_PAGES_PROJECT`, in a temporary copy whose `_headers` pins `connect-src` to the host in `SUPABASE_URL`.
 - `scripts/setup_telegram_webhook.py` sets secrets, deploys the bot function and sets the webhook; `--off` returns to polling.
 
 ## 6. Non-functional requirements
@@ -483,12 +488,17 @@ Google Sheet tabs: `Transactions`, `Holdings`, `Realized`. Columns mirror the V2
 | NFR-SEC-02 | New tables must enable RLS and follow the same policy shape. |
 | NFR-SEC-03 | The service-role key never reaches the browser; code using it filters every query by `household_id`. |
 | NFR-SEC-04 | `.env`, `Dashboard/config.js` and `pwa/config.js` are never committed, and their values are never printed. |
-| NFR-SEC-05 | The PWA is served with a strict content security policy, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`, `nosniff`, camera allowed only for self, and `noindex`. |
-| NFR-SEC-06 | The Telegram webhook rejects requests without the correct secret header. |
+| NFR-SEC-05 | The PWA is served with a strict content security policy (including `upgrade-insecure-requests`), `Strict-Transport-Security`, `Cross-Origin-Opener-Policy: same-origin`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`, `nosniff`, camera allowed only for self, and `noindex`. The deploy script narrows the policy's Supabase host to the project's own. |
+| NFR-SEC-06 | The Telegram webhook rejects requests without the correct secret header, compared in constant time. |
 | NFR-SEC-07 | Closing and reopening are enforced as owner-only inside the RPCs, not just hidden in the UI. |
 | NFR-SEC-08 | Notification payloads contain no amounts on the lock screen beyond what the user turned on; VAPID private keys stay in function secrets. |
 | NFR-SEC-09 | V1 limitation, accepted: `API_SECRET` ships to the browser in `config.js`, so the V1 dashboard is only as private as its URL. |
 | NFR-SEC-10 | Loan RPCs check `private.is_member` and, for the borrower, that the chosen user belongs to the same household; they never trust an id from the client without that check. |
+| NFR-SEC-11 | The scripts the app depends on (supabase-js, Chart.js) carry `integrity` hashes with `crossorigin`; the service worker caches them with a CORS request so the check still passes offline. |
+| NFR-SEC-12 | Public sign-ups are off in Supabase (a setting, not enforceable in code). A household has at most 10 members and a user at most 3 households. |
+| NFR-SEC-13 | Internal helper functions in the `private` schema are not executable by signed-in users; they run only from other server functions and triggers. |
+| NFR-SEC-14 | V1: the bot refuses everyone until `ALLOWED_TELEGRAM_ID` is set, and sheet writes store text beginning with `=`, `+`, `-` or `@` as plain text so it cannot run as a formula. |
+| NFR-SEC-15 | Browser-facing Edge Functions need a signed-in user's token; the optional `ALLOWED_ORIGINS` secret restricts the origins they answer. |
 
 ### 6.2 Performance
 
@@ -498,6 +508,8 @@ Google Sheet tabs: `Transactions`, `Holdings`, `Realized`. Columns mirror the V2
 | NFR-PRF-02 | Saving a transaction completes in under 2 seconds on a normal mobile connection. |
 | NFR-PRF-03 | An on-device scan returns rows in under 10 seconds after the models are cached. |
 | NFR-PRF-04 | Portfolio prices load in under 5 seconds; the app does not block on them. |
+| NFR-PRF-05 | Known limit: the app loads the whole transaction history on start and after every write, and keeps a copy in localStorage. That suits a few thousand rows; larger histories need recent-months loading and an IndexedDB cache (see `plan.md`). |
+| NFR-PRF-06 | Blur effects are kept off full-screen pages and off elements while they animate, so scrolling and sheet motion stay at 60 fps on a mid-range phone. |
 
 ### 6.3 Reliability and availability
 
@@ -520,7 +532,7 @@ Google Sheet tabs: `Transactions`, `Holdings`, `Realized`. Columns mirror the V2
 | NFR-USE-02 | Rupiah and dates follow Indonesian formatting. |
 | NFR-USE-03 | Errors are shown in plain words ("You are offline. Try again when connected."). |
 | NFR-USE-04 | Adding an expense takes at most three taps after opening the app, plus typing. |
-| NFR-USE-05 | Motion explains navigation: a tapped row or card grows into the sheet it opens and shrinks back on close; tabs slide in the direction of travel; the nav highlight glides; rows rise in on a new screen; buttons respond to touch. Built on the View Transitions API with a plain swap where it is unsupported, and switched off under `prefers-reduced-motion`. |
+| NFR-USE-05 | Motion explains navigation: a tapped row or card grows into the sheet it opens and shrinks back on close, and other sheets slide up and down with their glass blur intact; tabs slide in the direction of travel; the nav highlight glides; rows rise in on a new screen; buttons respond to touch. Built on the View Transitions API with a plain swap where it is unsupported, and switched off under `prefers-reduced-motion`. |
 
 ### 6.5 Maintainability
 
@@ -530,6 +542,8 @@ Google Sheet tabs: `Transactions`, `Holdings`, `Realized`. Columns mirror the V2
 | NFR-MNT-02 | Shared Edge Function code lives in `supabase/functions/_shared/`; changing it means redeploying `ocr`, `prices` and `telegram`. |
 | NFR-MNT-03 | Schema changes are new, timestamped files in `supabase/migrations/`. |
 | NFR-MNT-04 | `README.md` and `setup.md` are updated with every behavior change. |
+| NFR-MNT-05 | `sh tests/sql/run.sh` passes (ledger, plans, plan ledger, loans, hardening) before a migration is released. |
+| NFR-MNT-06 | The service worker's `VERSION` is bumped whenever a shell file changes, and `supabase/setup_all.sql` is rebuilt after a migration changes. |
 
 ### 6.6 Cost
 
@@ -553,6 +567,8 @@ Google Sheet tabs: `Transactions`, `Holdings`, `Realized`. Columns mirror the V2
 | Plans | Create a plan, add contributions crossing 25/50/75/100%; confirm one notification each. Move the target date so the plan is behind; confirm one "behind" notification. Pause it; confirm no reminders. Run `sh tests/sql/run.sh` (Docker) for the SQL rules. |
 | Plan ledger | Take out more than the plan holds (refused). Assign gold or stock, then more than is free (refused). Check that the account shows set aside and free to spend, and that an expense below the set-aside shows the warning. Sell the lot and confirm it leaves the plan. Close a month with assigned assets and check the statement says "market price" or "cost". |
 | Loans | Lend from Bersama to a member: Bersama's balance falls, income and expense totals do not move. Choose a non-member as borrower (refused). Lend more than the account holds (refused in the app). Repay part of it into Bersama, then more than is owed (refused); repay the rest and confirm the status turns to paid. Close the month a loan was made in: the statement lists it with the outstanding amount; repay it next month and confirm the old statement is unchanged and the new one no longer lists it. Try to add, edit or delete a loan or repayment dated in a closed month (refused). Delete a loan that has a repayment (refused). Run `sh tests/sql/run.sh` for the SQL rules. |
+| Hardening | Run `sh tests/sql/run.sh` (the hardening suite checks the household and member limits, the generic add-member message and that the private helpers refuse signed-in users). In Supabase, confirm "Allow new users to sign up" is off. Load the app and check that supabase-js and Chart.js load (an altered file would be refused by its integrity hash). |
+| Appearance | Open Home, Overview, Portfolio, Settings and a sheet (Add, a plan): text is readable on the glass, dropdown menus and the calendar open as glass panels, closing a sheet keeps its blur, and nothing stutters while sheets open and close. |
 | Notifications | Subscribe a device, run the `notify` function twice for the same day; confirm no duplicates. Block push; confirm the in-app list still shows them. |
 
 ## 8. Open items
@@ -562,5 +578,7 @@ Google Sheet tabs: `Transactions`, `Holdings`, `Realized`. Columns mirror the V2
 3. Plans (3.13): built (V2.5 to V2.7). Decided: sale proceeds go into plan cash (FR-PLN-17); notification checks keep using cost (FR-PLN-16); the statement uses last-day-of-month prices (FR-PLN-20); "Add money" never creates a transfer automatically.
 4. Notifications (3.14): in-app list, settings and database checks are built. Web Push delivery is not: it needs VAPID keys, the `notify` function, a `push` handler and a per-device switch, and the PWA's `_headers` must allow the push service endpoints. `pg_cron` must be enabled on the Supabase project.
 5. The V2.5 and V2.6 migrations (`20261118000000_plans.sql`, `20261119000000_plan_ledger.sql`) have been run on the live Supabase project. The V2.7 migration (`20261120000000_plan_sale_and_month_end.sql`) must be run, and the `prices` function redeployed (`npx supabase functions deploy prices`), for sale proceeds and month-end prices.
-6. Loans (3.14a, V2.9): built in code and covered by `tests/sql/loans_test.sql`; the migration `20261122000000_loans.sql` still has to be run on the live Supabase project, and the screens have not been tried against it. Decided: money lent from a household account (such as Bersama) to a household member who pays it back; principal only (no interest or schedule); not income or expense. Assumed, to confirm: the borrower shows by the part of their email before the `@` (members have no name field); any member can add loans and repayments (only closing stays owner-only); an account may not be lent more than it holds, enforced in the app only.
+6. Loans (3.14a, V2.9): built in code and covered by `tests/sql/loans_test.sql`; the migration `20261122000000_loans.sql` has been run on the live Supabase project and the Loans screens load, but lending and repaying have not been exercised against live data. Decided: money lent from a household account (such as Bersama) to a household member who pays it back; principal only (no interest or schedule); not income or expense. Assumed, to confirm: the borrower shows by the part of their email before the `@` (members have no name field); any member can add loans and repayments (only closing stays owner-only); an account may not be lent more than it holds, enforced in the app only.
 7. Off the roadmap for now: the Telegram webhook (FR-BOT-05 to FR-BOT-08, built but not deployed), Sheets mode and the nightly mirror (FR-MIG-03, FR-MIG-04), and hosting for the V1 bot and dashboard.
+8. Security hardening (V2.11) is built and tested. Still to do on the live project: confirm public sign-ups are off, run `20261123000000_hardening.sql`, optionally set `ALLOWED_ORIGINS`, redeploy `prices` and `ocr`, and redeploy the app. If the V1 Apps Script web app is no longer used, undeploy it; its old URL is in early commits.
+9. Known performance limits (NFR-PRF-05): full history reload and localStorage cache; render-blocking Google Fonts and two synchronous CDN scripts; the service worker rechecks every app file on each launch. Planned fixes are listed in `plan.md`.

@@ -1,8 +1,8 @@
 # Business Requirements Document (BRD)
 
 **Project:** FinanceTracker
-**Document version:** 1.1 (adds Loans, V2.9)
-**Date:** 2026-11-16
+**Document version:** 1.2 (adds the gold price fallback, the visual refresh and security hardening, V2.10 and V2.11)
+**Date:** 2026-11-17
 **Owner:** Ivan
 **Status:** Living document. V1 is in use; V2 is being built.
 
@@ -195,7 +195,7 @@ A loan is money taken out of one of the household's accounts, often the joint ac
 - **Skills and time:** built and maintained by one person; the stack must stay small (no build step for the web app).
 - **Privacy:** receipt photos are not stored; secrets never go into git.
 - **Platform:** V1 relies on Google Apps Script, which needs a redeploy for every backend change and does not answer CORS preflights.
-- **Pricing data:** stock prices are about 15 minutes delayed; gold buyback is updated once a day.
+- **Pricing data:** stock prices are about 15 minutes delayed; gold buyback is updated once a day. When the gold API is unavailable, the app falls back to a public price page.
 
 ## 12. Risks
 
@@ -212,6 +212,9 @@ A loan is money taken out of one of the household's accounts, often the joint ac
 | Push notifications are not delivered (iPhone needs the app installed to the home screen; the user may block them). | Medium | Medium | Show plan alerts inside the app as well; add Telegram as a second channel when the bot is live. |
 | A loan is entered as an expense, or a repayment as income, by mistake. | Medium | Medium | Loans and repayments have their own forms; the ordinary add form does not offer them, and the database refuses them there. |
 | A repayment is dated before its loan, or in a closed month. | Low | Low | The system refuses it and says why; the owner reopens the month if needed. |
+| Public sign-ups are left on in Supabase, so a stranger could create an account. | Low | High | Sign-ups are turned off (setup step); per-user limits (3 households, 10 members per household) cap what an unwanted account could do. |
+| A third-party script host (CDN) is compromised and serves altered code. | Low | High | The two scripts the app depends on carry integrity hashes, so an altered file is refused; the content security policy limits what any script may reach. |
+| The V1 Telegram bot is found by a stranger. | Low | Medium | The bot refuses everyone until `ALLOWED_TELEGRAM_ID` is set. |
 
 ## 13. Roadmap
 
@@ -225,7 +228,9 @@ A loan is money taken out of one of the household's accounts, often the joint ac
 | V2.5 | Plans module with progress and notifications (database, plans screens, in-app bell and notification settings). | Done, except Web Push delivery |
 | V2.6 | Plan ledger (add, take out, adjust), gold and stocks inside plans, set-aside and free-to-spend per account, plan section of the statement with prices. | Done (migration run on the live Supabase project) |
 | V2.7 | Sale proceeds go into plan cash; the statement values plan assets at the price of the month's last day. | Done in code (migration `20261120000000_plan_sale_and_month_end.sql` and the `prices` function still have to be deployed) |
-| V2.9 | Loans: lend from an account to a household member, record repayments, list unpaid loans on each month-end statement. | Done in code (migration `20261122000000_loans.sql` still has to be run) |
+| V2.9 | Loans: lend from an account to a household member, record repayments, list unpaid loans on each month-end statement. | Done (migration `20261122000000_loans.sql` is run on the live project) |
+| V2.10 | Gold price fallback when the Emas API fails; visual refresh (dark burgundy glass theme, matching dropdown menus, calendar and category list). | Done |
+| V2.11 | Security hardening: integrity-checked scripts, tighter headers, function limits, household and member limits. | Done in code; the migration `20261123000000_hardening.sql` and the redeploys still have to be run |
 | Next | Web Push delivery of notifications (VAPID keys, sending function, per-device switch). | Planned |
 
 ## 14. Approval

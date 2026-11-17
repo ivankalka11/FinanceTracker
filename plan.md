@@ -18,11 +18,15 @@ Supabase is the default database. The phone-first PWA (`pwa/`) is the main front
 | V2.6 | Plan ledger (add, take out, adjust), gold and stocks in plans, set aside and free to spend per account, plan section of the statement | Done; migrations run on the live Supabase project |
 | V2.7 | Sale proceeds go into plan cash; plan assets on the statement valued at the month's last day | Code and tests done; run `20261120000000_plan_sale_and_month_end.sql` on Supabase and redeploy the `prices` function |
 | V2.8 | Notification checks at 08:00, 12:00 and 16:00 WIB; Sync prices button on the Portfolio page | Code done; run `20261121000000_scheduled_jobs.sql` (needs pg_cron) and redeploy the app |
+| V2.9 | Loans: lend from an account to a member, repayments, unpaid loans on each statement | Done; `20261122000000_loans.sql` is run on the live project (the Loans screens load) |
+| V2.10 | Gold price fallback (public price-cards page when the Emas API fails); visual refresh: burgundy dark-glass theme, glass dropdown menus, calendar and category list, animation fixes | Done; redeploy the `prices` function and the app |
+| V2.11 | Security hardening: integrity hashes on CDN scripts, tighter headers pinned to your Supabase host, Edge Function limits and optional origin lock, household and member limits, V1 formula and bot fixes | Code and tests done; see Next |
 
 ## Next
 
-1. **Web Push delivery** of notifications: VAPID keys, an Edge Function that sends rows with `sent_at is null`, a `push` handler in `pwa/sw.js`, a push switch per device, and the iPhone "Add to Home Screen" note. `pwa/_headers` must allow the push service endpoints.
-2. **Housekeeping on GitHub:** make sure GitHub Pages is turned off in the repository settings (the sample Jekyll workflow was removed).
+1. **Finish the V2.11 rollout:** in Supabase turn off "Allow new users to sign up" (check it is off), run `supabase/migrations/20261123000000_hardening.sql`, optionally `supabase secrets set ALLOWED_ORIGINS=<app address>`, redeploy `prices` and `ocr`, then `python scripts/deploy_pwa.py`.
+2. **Web Push delivery** of notifications: VAPID keys, an Edge Function that sends rows with `sent_at is null`, a `push` handler in `pwa/sw.js`, a push switch per device, and the iPhone "Add to Home Screen" note. `pwa/_headers` must allow the push service endpoints.
+3. **Housekeeping on GitHub:** make sure GitHub Pages is turned off in the repository settings (the sample Jekyll workflow was removed).
 
 ## Decisions made
 
@@ -32,6 +36,9 @@ Supabase is the default database. The phone-first PWA (`pwa/`) is the main front
 - "Add money" to a plan never creates a transfer automatically.
 - Holding prices are refreshed with a Sync prices button, not a scheduled job: simpler, no extra secrets, and the data is only needed when someone looks.
 - Receipt photos are not stored. The unused `receipts` table can be dropped later.
+- The look is dark burgundy glass on pages and modals; blur is kept off pages and moving tiles for scrolling speed. Pickers (dropdown, calendar, category list) are custom so they match; iPhone Safari keeps its native select picker.
+- Public sign-ups stay off: the app cannot enforce it, so it is a Supabase setting to verify. The household and member limits and the generic add-member message reduce abuse but do not hide whether an email has an account.
+- Known scale limits, not yet worth the work at this size: the app reloads the whole history on start and after every write, and keeps a copy in localStorage (a few thousand transactions fit). Fixes when needed: load recent months plus server totals, an IndexedDB cache, load Chart.js on demand, self-host fonts and libraries, and serve the app shell from cache first.
 
 ## Parked (off the roadmap)
 
