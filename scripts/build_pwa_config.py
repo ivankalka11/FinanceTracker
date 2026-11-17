@@ -20,7 +20,7 @@ sys.path.insert(0, str(ROOT / "TelegramBot"))
 import env_loader  # noqa: E402,F401  (loads the root .env; real env vars win)
 
 KEYS = ("SUPABASE_URL", "SUPABASE_PUBLISHABLE_KEY")
-BG, ACCENT = (0x0F, 0x0F, 0x11), (0xEE, 0x4D, 0x8C)
+BG, ACCENT = (0x13, 0x0A, 0x0E), (0xB2, 0x34, 0x55)
 # three rising bars on a 512 grid, kept inside the maskable safe zone
 BARS = ((156, 276, 212, 356), (228, 216, 284, 356), (300, 156, 356, 356))
 

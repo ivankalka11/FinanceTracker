@@ -1,17 +1,17 @@
 /* FinanceTracker PWA: near-black canvas, one pink accent, white bottom sheets. */
 :root {
-  --bg: #0f0f11;
-  --card: #1b1b1f;
-  --line: #2c2c32;
+  --bg: #130a0e;
+  --card: #21151b;
+  --line: #35222b;
   --fg: #ffffff;
-  --muted: #9a99a1;
-  --accent: #ee4d8c;
-  --accent-press: #d23a78;
+  --muted: #a99aa0;
+  --accent: #b23455;
+  --accent-press: #8f2742;
   --sheet: #ffffff;
-  --ink: #17161a;
-  --ink-muted: #77737c;
-  --rule: #e7e4e1;
-  --wash: #f3f1ee;
+  --ink: #1a1417;
+  --ink-muted: #7a7176;
+  --rule: #eae3e5;
+  --wash: #f4eff0;
   --green: #17804a;
   --red: #d6322f;
   --green-on-dark: #4cc38a;
@@ -54,7 +54,7 @@ button { cursor: pointer; border: 0; background: none; padding: 0; }
 .between { justify-content: space-between; }
 .grow { flex: 1; min-width: 0; }
 .title { font-size: 17px; font-weight: 700; margin: 0; }
-.banner { background: #3a1a2c; color: #ffc4dc; font-size: 12.5px; padding: 8px 18px; text-align: center; }
+.banner { background: #35141c; color: #f2c3cd; font-size: 12.5px; padding: 8px 18px; text-align: center; }
 
 .avatar { width: 40px; height: 40px; border-radius: 50%; background: var(--accent); display: grid; place-items: center; font-weight: 800; flex: none; }
 .icon-btn { width: 40px; height: 40px; border-radius: 50%; background: var(--card); border: 1px solid var(--line); display: grid; place-items: center; flex: none; }
@@ -73,7 +73,12 @@ svg.i { width: 19px; height: 19px; stroke: currentColor; fill: none; stroke-widt
 
 .card { background: var(--card); border: 1px solid var(--line); border-radius: 20px; padding: 14px; display: flex; flex-direction: column; gap: 12px; }
 .card h3 { margin: 0; font-size: 14px; font-weight: 700; }
-.link { color: var(--muted); font-size: 12.5px; text-decoration: underline; text-underline-offset: 3px; }
+/* text links are small dark-burgundy buttons */
+.link { display: inline-flex; align-items: center; justify-content: center; text-align: center; min-height: 32px; padding: 6px 14px;
+  border-radius: 14px; background: #7d1d38; color: #fff; font-size: 12.5px; font-weight: 600; text-decoration: none;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.18); transition: background-color 0.2s; }
+.link:active { background: #5f1429; }
+#scan .link { display: flex; width: 100%; min-height: 40px; }
 
 /* Account cards, stacked like a wallet: every card shows its header strip,
    the open card shows in full and pushes the cards after it down. */
@@ -94,11 +99,11 @@ svg.i { width: 19px; height: 19px; stroke: currentColor; fill: none; stroke-widt
   border: 1px solid rgba(255, 255, 255, 0.12); box-shadow: 0 0 0 16px rgba(255, 255, 255, 0.035); pointer-events: none; }
 .wcard + .wcard { margin-top: calc(var(--strip) - 142px); }   /* overlap: only the strip above shows */
 .wcard.open + .wcard { margin-top: 8px; }                     /* the open card is fully revealed */
-.wcard.c0 { background: linear-gradient(135deg, #ff6fa5, #d6367a); }
-.wcard.c1 { background: linear-gradient(135deg, #34343d, #25252c); }
-.wcard.c2 { background: linear-gradient(135deg, #4a4a55, #33333c); }
-.wcard.c3 { background: linear-gradient(135deg, #5b2c47, #3a1a2c); }
-.wcard.c4 { background: linear-gradient(135deg, #2a2a31, #1b1b1f); }
+.wcard.c0 { background: linear-gradient(135deg, #c4445f, #7d1d38); }
+.wcard.c1 { background: linear-gradient(135deg, #3a3036, #2a2126); }
+.wcard.c2 { background: linear-gradient(135deg, #4c4046, #352b30); }
+.wcard.c3 { background: linear-gradient(135deg, #5a2431, #35141c); }
+.wcard.c4 { background: linear-gradient(135deg, #2b2226, #21151b); }
 .wc-head, .wc-body { position: relative; z-index: 1; }
 .wc-head { height: var(--strip); flex: none; width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 0 14px; color: #fff; text-align: left; }
 .wc-head b { font-size: 17px; font-weight: 800; letter-spacing: -0.2px; white-space: nowrap; }
@@ -143,7 +148,6 @@ svg.i { width: 19px; height: 19px; stroke: currentColor; fill: none; stroke-widt
   gap: 10px;
 }
 .sheet h2 { margin: 0; font-size: 16px; font-weight: 700; }
-.sheet .link { color: var(--ink); }
 .sheet .muted { color: var(--ink-muted); }
 .empty { text-align: center; color: var(--ink-muted); padding: 28px 12px; font-size: 14px; }
 
@@ -249,7 +253,7 @@ button, .chip, .pill { touch-action: manipulation; }
   -webkit-mask-image: linear-gradient(115deg, transparent 38%, #000 50%, transparent 62%); mask-image: linear-gradient(115deg, transparent 38%, #000 50%, transparent 62%);
   -webkit-mask-size: 320% 100%; mask-size: 320% 100%; -webkit-mask-position: 100% 0; mask-position: 100% 0; }
 @media (prefers-reduced-motion: no-preference) {
-  .login-art i + i { animation: login-sweep 4.5s ease-in-out infinite; }
+  .login-art i + i { animation: login-sweep 4.5s ease-in-out 3; }   /* three sweeps, then still: it repaints on the main thread */
   @keyframes login-sweep { to { -webkit-mask-position: 0 0; mask-position: 0 0; } }
 }
 .login-copy h1 { margin: 0; font-size: 40px; line-height: 1.1; letter-spacing: -0.03em; font-weight: 800; }
@@ -262,8 +266,8 @@ button, .chip, .pill { touch-action: manipulation; }
 .login .error { color: var(--red-on-dark); text-align: left; padding: 0 6px; }
 .login .pill { min-height: 52px; flex: none; background: #fff; color: var(--ink); }
 .login .pill:active { background: #e4e2e0; }
-.login .pill.soft { background: #26262b; color: #fff; }
-.login .pill.soft:active { background: #32323a; }
+.login .pill.soft { background: #2a1c22; color: #fff; }
+.login .pill.soft:active { background: #3a2830; }
 .login .hint { margin: 4px 0 0; color: #77767e; text-align: center; }
 
 /* ---------- bottom navigation ---------- */
@@ -375,7 +379,7 @@ button, .chip, .pill { touch-action: manipulation; }
 .badge[hidden] { display: none; }
 .notif-list { display: flex; flex-direction: column; gap: 8px; }
 .notif { display: flex; align-items: flex-start; gap: 10px; width: 100%; text-align: left; color: var(--ink); padding: 11px 12px; border-radius: 14px; border: 1px solid var(--rule); }
-.notif.unread { background: #fff0f6; border-color: #fbd0e2; }
+.notif.unread { background: #fbeef1; border-color: #f0cdd5; }
 .notif b { display: block; font-size: 14px; font-weight: 600; }
 .notif.unread b { font-weight: 800; }
 .notif small { display: block; font-size: 12.5px; color: var(--ink-muted); margin-top: 2px; }
@@ -422,6 +426,10 @@ button, .chip, .pill { touch-action: manipulation; }
   .overlay { animation: dim-in 0.25s ease both; }
   .modal { animation: sheet-up 0.45s var(--spring) both; }
   .modal.grown { animation: none; }
+  /* closing a plain sheet: the mirror of opening, on the live (blurred) element */
+  .overlay.closing { animation: dim-out 0.28s ease both; pointer-events: none; }
+  .overlay.closing .modal { animation: sheet-down 0.3s cubic-bezier(0.4, 0, 1, 1) both; }
+  @keyframes dim-out { to { background: rgba(0, 0, 0, 0); } }
 
   /* a newly shown screen: rows rise in one after another */
   .enter .tx, .enter .card, .enter .stat, .enter .list-row, .enter .chart-box, .enter .seg {
@@ -445,6 +453,11 @@ button, .chip, .pill { touch-action: manipulation; }
   .nav button[data-go="settings"] svg { view-transition-name: nav-ic-settings; }
   .nav button.add svg { view-transition-name: nav-ic-add; }
   #app > .sheet { view-transition-name: page; }
+  /* While a sheet grows out of a row (or shrinks back), the nav and the page stay in the root layer.
+     As their own transition layers they paint above the scrim and the sheet, then drop underneath
+     the instant the transition ends: the nav looked late to hide and the dim popped in. */
+  html[data-vt="hero"] .nav, html[data-vt="hero"] .nav .nav-ind, html[data-vt="hero"] .nav button svg,
+  html[data-vt="hero"] #app > .sheet { view-transition-name: none; }
 
   ::view-transition-group(*) { animation-duration: 0.42s; animation-timing-function: var(--spring); }
   ::view-transition-old(root), ::view-transition-new(root) { animation-duration: 0.3s; }
@@ -499,11 +512,12 @@ button, .chip, .pill { touch-action: manipulation; }
 :root {
   --blur: blur(22px) saturate(180%);
   --blur-strong: blur(32px) saturate(190%);
+  --blur-sm: blur(10px) saturate(150%);      /* small tiles: cheaper, looks the same over the soft glow */
   --g-dark: rgba(255, 255, 255, 0.07);       /* fill for glass on the dark canvas */
   --g-dark-line: rgba(255, 255, 255, 0.15);
   --g-nav: rgba(22, 22, 27, 0.76);
   --g-sheet: rgba(255, 255, 255, 0.97);      /* frosted white sheets and modals */
-  --g-scrim: rgba(10, 10, 14, 0.4);
+  --g-scrim: rgba(10, 6, 9, 0.5);
   --g-toast: rgba(30, 30, 35, 0.72);
   --g-tile: rgba(23, 22, 26, 0.045);         /* soft tiles on the white sheet */
   --spec: inset 0 1px 0 rgba(255, 255, 255, 0.3), inset 0 -1px 0 rgba(255, 255, 255, 0.04);
@@ -511,7 +525,7 @@ button, .chip, .pill { touch-action: manipulation; }
 }
 @media (prefers-reduced-transparency: reduce) {
   :root {
-    --blur: none; --blur-strong: none;
+    --blur: none; --blur-strong: none; --blur-sm: none;
     --g-dark: var(--card); --g-dark-line: var(--line); --g-nav: var(--bg);
     --g-sheet: #fff; --g-scrim: rgba(0, 0, 0, 0.55); --g-toast: var(--ink);
     --g-tile: var(--wash); --spec: none; --spec-light: none;
@@ -519,7 +533,7 @@ button, .chip, .pill { touch-action: manipulation; }
 }
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
   :root {
-    --blur: none; --blur-strong: none;
+    --blur: none; --blur-strong: none; --blur-sm: none;
     --g-dark: var(--card); --g-dark-line: var(--line); --g-nav: var(--bg);
     --g-sheet: #fff; --g-scrim: rgba(0, 0, 0, 0.55); --g-toast: var(--ink);
     --g-tile: var(--wash); --spec: none; --spec-light: none;
@@ -530,18 +544,22 @@ button, .chip, .pill { touch-action: manipulation; }
 body::before {
   content: ""; position: fixed; inset: 0; z-index: -1; pointer-events: none;
   background:
-    radial-gradient(440px 380px at 92% -4%, rgba(238, 77, 140, 0.38), transparent 70%),
-    radial-gradient(400px 400px at -10% 36%, rgba(104, 92, 255, 0.2), transparent 70%),
-    radial-gradient(480px 340px at 82% 104%, rgba(238, 77, 140, 0.22), transparent 70%);
+    radial-gradient(440px 380px at 92% -4%, rgba(178, 52, 85, 0.38), transparent 70%),
+    radial-gradient(400px 400px at -10% 36%, rgba(150, 70, 95, 0.22), transparent 70%),
+    radial-gradient(480px 340px at 82% 104%, rgba(178, 52, 85, 0.22), transparent 70%);
 }
 
 /* glass on the dark canvas */
 .card, .stat, .seg, .icon-btn, .pill.ghost {
   background: var(--g-dark); border-color: var(--g-dark-line);
-  -webkit-backdrop-filter: var(--blur); backdrop-filter: var(--blur); box-shadow: var(--spec);
+  -webkit-backdrop-filter: var(--blur-sm); backdrop-filter: var(--blur-sm); box-shadow: var(--spec);
 }
-.seg button.on { box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.35), 0 4px 12px rgba(238, 77, 140, 0.35); }
-.due-card { border-color: rgba(238, 77, 140, 0.6); }
+/* no blur on tiles while they move: re-blurring every frame is the costliest part of the motion */
+.enter :is(.card, .stat, .seg, .icon-btn, .pill.ghost), html[data-vt] :is(.card, .stat, .seg, .icon-btn, .pill.ghost) {
+  -webkit-backdrop-filter: none; backdrop-filter: none;
+}
+.seg button.on { box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.35), 0 4px 12px rgba(178, 52, 85, 0.35); }
+.due-card { border-color: rgba(178, 52, 85, 0.6); }
 
 /* floating nav */
 .nav {
@@ -550,24 +568,36 @@ body::before {
   box-shadow: 0 14px 36px rgba(0, 0, 0, 0.42), var(--spec);
 }
 .nav-ind {
-  background: linear-gradient(180deg, #ff74a8, #e83f84);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.45), 0 6px 16px rgba(238, 77, 140, 0.45);
+  background: linear-gradient(180deg, #cf4d6b, #9a2a47);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.45), 0 6px 16px rgba(178, 52, 85, 0.45);
 }
 
 /* frosted white sheets */
 .sheet {
-  background: var(--g-sheet);
-  -webkit-backdrop-filter: var(--blur-strong); backdrop-filter: var(--blur-strong);
+  background: var(--g-sheet);   /* 97% opaque: a blur behind it would be invisible, so none */
   box-shadow: var(--spec-light), 0 -10px 40px rgba(0, 0, 0, 0.25);
 }
-.overlay { background: var(--g-scrim); -webkit-backdrop-filter: blur(10px) saturate(140%); backdrop-filter: blur(10px) saturate(140%); }
-@media (prefers-reduced-transparency: reduce) { .overlay { -webkit-backdrop-filter: none; backdrop-filter: none; } }
+/* the overlay is only a scrim: one blur layer (the modal's own) is enough and keeps sheets smooth */
+.overlay { background: var(--g-scrim); }
+/* modals are clear dark glass (the iOS look): a faint tinted fill over a strong blur, bright edge.
+   White text through the variables below; the "modal glass" block at the end of the file
+   adjusts the few controls that hard-code light colors. */
 .modal {
-  background: var(--g-sheet);
-  -webkit-backdrop-filter: var(--blur-strong); backdrop-filter: var(--blur-strong);
-  box-shadow: var(--spec-light), 0 -14px 50px rgba(0, 0, 0, 0.35);
+  background: linear-gradient(180deg, rgba(58, 26, 38, 0.42), rgba(26, 12, 18, 0.34));
+  --ink: #fff; --ink-muted: rgba(255, 255, 255, 0.68); --rule: rgba(255, 255, 255, 0.18);
+  --wash: rgba(255, 255, 255, 0.1); --sheet: rgba(255, 255, 255, 0.09);
+  --g-tile: rgba(255, 255, 255, 0.1); --spec-light: inset 0 1px 0 rgba(255, 255, 255, 0.28);
+  --green: var(--green-on-dark); --red: var(--red-on-dark); --accent-press: #f0899f;
+  color-scheme: dark;
+  -webkit-backdrop-filter: blur(30px) saturate(190%); backdrop-filter: blur(30px) saturate(190%);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.4), inset 0 0 0 1px rgba(255, 255, 255, 0.1), 0 -14px 50px rgba(0, 0, 0, 0.4);
 }
-.modal .close { background: rgba(23, 22, 26, 0.07); }
+@media (prefers-reduced-transparency: reduce) {
+  .modal { background: #261319; -webkit-backdrop-filter: none; backdrop-filter: none; }
+}
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .modal { background: #261319; }
+}
 
 /* controls on the white sheet: soft tiles with a bright edge */
 .st-grid > div, .code-box { background: var(--g-tile); box-shadow: var(--spec-light); }
@@ -579,10 +609,10 @@ body::before {
 
 /* the main button: a glossy pink gem */
 .pill:not(.ghost):not(.ghost-light):not(.danger):not(.dark):not(.soft) {
-  background: linear-gradient(180deg, #ff74a8, #e83f84);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.4), 0 6px 16px rgba(238, 77, 140, 0.32);
+  background: linear-gradient(180deg, #cf4d6b, #9a2a47);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.4), 0 6px 16px rgba(178, 52, 85, 0.32);
 }
-.pill:not(.ghost):not(.ghost-light):not(.danger):not(.dark):not(.soft):active { background: linear-gradient(180deg, #f4609a, #cb3472); }
+.pill:not(.ghost):not(.ghost-light):not(.danger):not(.dark):not(.soft):active { background: linear-gradient(180deg, #b9415f, #7f2039); }
 
 /* toast */
 #toast { background: var(--g-toast); border-color: var(--g-dark-line); -webkit-backdrop-filter: var(--blur); backdrop-filter: var(--blur); box-shadow: var(--spec), 0 10px 30px rgba(0, 0, 0, 0.35); }
@@ -595,3 +625,157 @@ body::before {
   box-shadow: var(--spec-light), inset 0 0 0 1px rgba(23, 22, 26, 0.06);
 }
 .modal .pill.ghost:active, .sheet .pill.ghost:active { background: rgba(23, 22, 26, 0.09); }
+
+/* ---------- modal glass: controls that hard-code light colors ---------- */
+.modal .close { background: rgba(255, 255, 255, 0.14); }
+.modal .chip { background: var(--wash); color: #fff; box-shadow: var(--spec-light); }
+.modal .chip.on { background: #fff; color: #1a1417; border-color: #fff; box-shadow: none; }
+.modal .pill.ghost, .modal .pill.ghost-light, .modal .pill.dark {
+  background: rgba(255, 255, 255, 0.12); color: #fff; box-shadow: var(--spec-light);
+}
+.modal .pill.ghost:active, .modal .pill.ghost-light:active, .modal .pill.dark:active { background: rgba(255, 255, 255, 0.2); }
+.modal .tx .logo { background: rgba(255, 255, 255, 0.18); }
+.modal .tx .logo.out { background: var(--wash); }
+.modal select {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23ffffff' stroke-opacity='0.7' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+}
+@supports not (appearance: base-select) { .modal select option { color: #1a1417; background: #fff; } }
+.modal input::placeholder, .modal textarea::placeholder { color: rgba(255, 255, 255, 0.42); }
+.modal .link { background: rgba(255, 255, 255, 0.14); }
+.modal .tag.ok { background: rgba(76, 195, 138, 0.18); }
+.modal .tag.due { background: rgba(255, 123, 114, 0.18); }
+.modal .notif.unread { background: rgba(178, 52, 85, 0.22); border-color: rgba(240, 137, 159, 0.4); }
+.modal .plan-actions .pill.danger { background: rgba(255, 123, 114, 0.18); color: var(--red); box-shadow: var(--spec-light); }
+.modal .plan-actions .pill.danger:active { background: rgba(255, 123, 114, 0.3); }
+.modal .tx .logo.gold { background: rgba(212, 160, 23, 0.25); color: #f2cd6b; }
+.modal .tx .logo.xfer { background: rgba(240, 137, 159, 0.2); color: var(--accent-press); }
+.modal .tx .meta .cat.wait { background: rgba(240, 137, 159, 0.2); color: var(--accent-press); }
+.modal .tx .logo.in { background: rgba(76, 195, 138, 0.2); color: var(--green); }
+
+/* ---------- dropdown menus: glass, like the sheets ----------
+   Selects use the customizable-select API where it exists (Chrome, Edge, Android); iOS and
+   older browsers keep their native picker, which follows color-scheme. The category field's
+   suggestions are the custom .combo-list built in app.js. */
+@supports (appearance: base-select) {
+  select, ::picker(select) { appearance: base-select; }
+  select { background-image: none; padding-right: 12px; align-items: center; justify-content: space-between; }
+  select::picker-icon { content: ""; width: 18px; height: 18px; flex: none; opacity: 0.7;
+    background: no-repeat center / 18px url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23ffffff' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+    transition: rotate 0.2s ease; }
+  select:open::picker-icon { rotate: 180deg; }
+  select selectedcontent { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  ::picker(select) {
+    margin-block: 6px; padding: 6px; max-height: min(46vh, 320px); border: 1px solid rgba(255, 255, 255, 0.16); border-radius: 18px;
+    background: linear-gradient(180deg, rgba(62, 28, 41, 0.78), rgba(28, 13, 19, 0.82)); color: #fff;
+    -webkit-backdrop-filter: blur(28px) saturate(190%); backdrop-filter: blur(28px) saturate(190%);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.3), 0 18px 44px rgba(0, 0, 0, 0.5);
+    opacity: 0; transform: translateY(-6px) scale(0.98); transform-origin: top center;
+    transition: opacity 0.16s ease, transform 0.2s var(--ease-out, ease), overlay 0.2s allow-discrete, display 0.2s allow-discrete;
+  }
+  ::picker(select):popover-open { opacity: 1; transform: none; }
+  @starting-style { ::picker(select):popover-open { opacity: 0; transform: translateY(-6px) scale(0.98); } }
+  select option { display: flex; align-items: center; gap: 8px; min-height: 40px; padding: 8px 12px; border-radius: 12px;
+    color: #fff; background: transparent; font-size: 15px; font-weight: 500; cursor: pointer; }
+  select option:hover, select option:focus-visible { background: rgba(255, 255, 255, 0.12); outline: none; }
+  select option:checked { background: rgba(178, 52, 85, 0.6); font-weight: 700; }
+  select option::checkmark { content: ""; display: none; }
+  select option:disabled { opacity: 0.45; }
+}
+@supports (appearance: base-select) {
+  @media (prefers-reduced-transparency: reduce) { ::picker(select) { background: #2a1520; -webkit-backdrop-filter: none; backdrop-filter: none; } }
+  @media (prefers-reduced-motion: reduce) { ::picker(select) { transition: none; } select::picker-icon { transition: none; } }
+}
+
+.combo-list {
+  position: fixed; z-index: 70; overflow-y: auto; padding: 6px; border-radius: 18px; border: 1px solid rgba(255, 255, 255, 0.16);
+  background: linear-gradient(180deg, rgba(62, 28, 41, 0.78), rgba(28, 13, 19, 0.82)); color: #fff;
+  -webkit-backdrop-filter: blur(28px) saturate(190%); backdrop-filter: blur(28px) saturate(190%);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.3), 0 18px 44px rgba(0, 0, 0, 0.5);
+  overscroll-behavior: contain;
+}
+.combo-list[hidden] { display: none; }
+.combo-opt { min-height: 40px; padding: 10px 12px; border-radius: 12px; font-size: 15px; font-weight: 500; display: flex; align-items: center; cursor: pointer; }
+.combo-opt:hover, .combo-opt.active { background: rgba(255, 255, 255, 0.14); }
+.combo-opt:active { background: rgba(178, 52, 85, 0.6); }
+@media (prefers-reduced-transparency: reduce) { .combo-list { background: #2a1520; -webkit-backdrop-filter: none; backdrop-filter: none; } }
+@media (prefers-reduced-motion: no-preference) { .combo-list:not([hidden]) { animation: combo-in 0.18s var(--ease-out, ease) both; } @keyframes combo-in { from { opacity: 0; transform: translateY(-4px); } } }
+
+/* ---------- date picker: glass calendar (built in app.js: enhanceDates) ---------- */
+input[type="date"] {
+  padding-right: 42px; cursor: pointer;
+  background: var(--sheet) no-repeat right 13px center / 18px url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23ffffff' stroke-opacity='0.75' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='4' y='5' width='16' height='15' rx='3'/%3E%3Cpath d='M4 10h16M9 3v4M15 3v4'/%3E%3C/svg%3E");
+}
+input[type="date"]::-webkit-calendar-picker-indicator { display: none; }
+input[type="date"]:read-only:focus { border-color: var(--accent); }
+
+.cal {
+  position: fixed; z-index: 70; overflow-y: auto; padding: 12px; border-radius: 22px; border: 1px solid rgba(255, 255, 255, 0.16);
+  background: linear-gradient(180deg, rgba(62, 28, 41, 0.8), rgba(28, 13, 19, 0.84)); color: #fff;
+  -webkit-backdrop-filter: blur(28px) saturate(190%); backdrop-filter: blur(28px) saturate(190%);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.3), 0 18px 44px rgba(0, 0, 0, 0.5);
+  overscroll-behavior: contain; user-select: none; -webkit-user-select: none;
+}
+.cal[hidden] { display: none; }
+.cal button { color: inherit; font: inherit; }
+.cal-head { display: flex; align-items: center; justify-content: space-between; gap: 6px; margin-bottom: 8px; }
+.cal-title { flex: 1; min-height: 38px; border-radius: 12px; font-size: 15px; font-weight: 700; letter-spacing: -0.1px; }
+.cal-title:hover { background: rgba(255, 255, 255, 0.1); }
+.cal-nav { width: 38px; height: 38px; border-radius: 50%; display: grid; place-items: center; background: rgba(255, 255, 255, 0.1); flex: none; }
+.cal-nav svg.i { width: 18px; height: 18px; }
+.cal-nav:disabled, .cal-d:disabled, .cal-m:disabled, .cal-today:disabled { opacity: 0.28; cursor: default; }
+.cal-week, .cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; text-align: center; }
+.cal-week span { font-size: 11px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: rgba(255, 255, 255, 0.55); padding: 4px 0 6px; }
+.cal-d { aspect-ratio: 1; max-height: 42px; width: 100%; border-radius: 50%; font-size: 14.5px; font-weight: 500; display: grid; place-items: center; }
+.cal-d:not(:disabled):hover { background: rgba(255, 255, 255, 0.14); }
+.cal-d.today { box-shadow: inset 0 0 0 1.5px rgba(255, 255, 255, 0.5); }
+.cal-d.sel, .cal-m.sel { background: linear-gradient(180deg, #cf4d6b, #9a2a47); font-weight: 700; box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.4), 0 4px 12px rgba(178, 52, 85, 0.4); }
+.cal-months { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+.cal-m { min-height: 46px; border-radius: 14px; font-size: 14.5px; font-weight: 600; background: rgba(255, 255, 255, 0.08); }
+.cal-m:not(:disabled):hover { background: rgba(255, 255, 255, 0.16); }
+.cal-foot { display: flex; justify-content: center; margin-top: 8px; }
+.cal-today { min-height: 34px; padding: 0 16px; border-radius: 999px; font-size: 13px; font-weight: 600; background: rgba(255, 255, 255, 0.1); }
+@media (prefers-reduced-transparency: reduce) { .cal { background: #2a1520; -webkit-backdrop-filter: none; backdrop-filter: none; } }
+@media (prefers-reduced-motion: no-preference) { .cal:not([hidden]) { animation: combo-in 0.18s var(--ease-out, ease) both; } }
+
+/* ---------- glass pages: Home, Stats, Portfolio, Settings, Activity, Plans, Loans ----------
+   The full-width panel under the header is translucent dark glass with white text, like the
+   modals. No backdrop blur here: nothing scrolls beneath it, and a blur on a screen-sized layer
+   would only cost scrolling speed. */
+.sheet {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.09), rgba(255, 255, 255, 0.045));
+  --ink: #fff; --ink-muted: rgba(255, 255, 255, 0.66); --rule: rgba(255, 255, 255, 0.16);
+  --wash: rgba(255, 255, 255, 0.1); --sheet: rgba(255, 255, 255, 0.07);
+  --g-tile: rgba(255, 255, 255, 0.1); --spec-light: inset 0 1px 0 rgba(255, 255, 255, 0.26);
+  --green: var(--green-on-dark); --red: var(--red-on-dark); --accent-press: #f0899f;
+  color-scheme: dark;
+  border: 1px solid rgba(255, 255, 255, 0.1); border-bottom: 0;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.34), 0 -10px 40px rgba(0, 0, 0, 0.3);
+}
+.auth .sheet { color-scheme: dark; }
+@media (prefers-reduced-transparency: reduce) { .sheet { background: #1d1217; } }
+
+/* ---------- page glass: controls that hard-code light colors ---------- */
+.sheet .close { background: rgba(255, 255, 255, 0.14); }
+.sheet .chip { background: var(--wash); color: #fff; box-shadow: var(--spec-light); }
+.sheet .chip.on { background: #fff; color: #1a1417; border-color: #fff; box-shadow: none; }
+.sheet .pill.ghost, .sheet .pill.ghost-light, .sheet .pill.dark {
+  background: rgba(255, 255, 255, 0.12); color: #fff; box-shadow: var(--spec-light);
+}
+.sheet .pill.ghost:active, .sheet .pill.ghost-light:active, .sheet .pill.dark:active { background: rgba(255, 255, 255, 0.2); }
+.sheet .tx .logo { background: rgba(255, 255, 255, 0.18); }
+.sheet .tx .logo.out { background: var(--wash); }
+.sheet select {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23ffffff' stroke-opacity='0.7' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+}
+@supports not (appearance: base-select) { .sheet select option { color: #1a1417; background: #fff; } }
+.sheet input::placeholder, .sheet textarea::placeholder { color: rgba(255, 255, 255, 0.42); }
+.sheet .tag.ok { background: rgba(76, 195, 138, 0.18); }
+.sheet .tag.due { background: rgba(255, 123, 114, 0.18); }
+.sheet .notif.unread { background: rgba(178, 52, 85, 0.22); border-color: rgba(240, 137, 159, 0.4); }
+.sheet .plan-actions .pill.danger { background: rgba(255, 123, 114, 0.18); color: var(--red); box-shadow: var(--spec-light); }
+.sheet .plan-actions .pill.danger:active { background: rgba(255, 123, 114, 0.3); }
+.sheet .tx .logo.gold { background: rgba(212, 160, 23, 0.25); color: #f2cd6b; }
+.sheet .tx .logo.xfer { background: rgba(240, 137, 159, 0.2); color: var(--accent-press); }
+.sheet .tx .meta .cat.wait { background: rgba(240, 137, 159, 0.2); color: var(--accent-press); }
+.sheet .tx .logo.in { background: rgba(76, 195, 138, 0.2); color: var(--green); }
+

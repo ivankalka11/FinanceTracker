@@ -845,25 +845,25 @@
       data: {
         labels: months.map((m) => m.label),
         datasets: [
-          { label: "Income", data: months.map((m) => total(m.key, "income")), backgroundColor: "#5a5a63", borderRadius: 5 },
-          { label: "Expense", data: months.map((m) => total(m.key, "expense")), backgroundColor: "#ee4d8c", borderRadius: 5 },
+          { label: "Income", data: months.map((m) => total(m.key, "income")), backgroundColor: "rgba(255, 255, 255, 0.3)", borderRadius: 5 },
+          { label: "Expense", data: months.map((m) => total(m.key, "expense")), backgroundColor: "#cf4d6b", borderRadius: 5 },
         ],
       },
       options: {
         maintainAspectRatio: false,
-        plugins: { legend: { labels: { color: "#9a99a1", boxWidth: 10, boxHeight: 10 } },
+        plugins: { legend: { labels: { color: "rgba(255, 255, 255, 0.85)", boxWidth: 10, boxHeight: 10 } },
                    tooltip: { callbacks: { label: (c) => `${c.dataset.label}: ${rp(c.parsed.y)}` } } },
-        scales: { x: { ticks: { color: "#9a99a1" }, grid: { display: false } },
-                  y: { ticks: { color: "#9a99a1", callback: (v) => compact(v) }, grid: { color: "#2c2c32" } } },
+        scales: { x: { ticks: { color: "rgba(255, 255, 255, 0.6)" }, grid: { display: false } },
+                  y: { ticks: { color: "rgba(255, 255, 255, 0.6)", callback: (v) => compact(v) }, grid: { color: "rgba(255, 255, 255, 0.1)" } } },
       },
     }));
     if (s.byCat.length && $("#donut")) {
-      const palette = ["#ee4d8c", "#17161a", "#f7a0c4", "#77737c", "#b02a63", "#c9c5c0", "#3a3a42", "#fbd0e2"];
+      const palette = ["#cf4d6b", "#f0899f", "#9a2a47", "#e3a3b3", "#7d1d38", "#f5c2cd", "#b23455", "#fadde3"];
       charts.push(new Chart($("#donut"), {
         type: "doughnut",
-        data: { labels: s.byCat.map((c) => c[0]), datasets: [{ data: s.byCat.map((c) => c[1]), backgroundColor: palette, borderWidth: 2, borderColor: "#fff" }] },
+        data: { labels: s.byCat.map((c) => c[0]), datasets: [{ data: s.byCat.map((c) => c[1]), backgroundColor: palette, borderWidth: 2, borderColor: "#1c1217" }] },
         options: { maintainAspectRatio: false, cutout: "62%",
-          plugins: { legend: { position: "right", labels: { color: "#17161a", boxWidth: 10, boxHeight: 10, font: { size: 11 } } },
+          plugins: { legend: { position: "right", labels: { color: "rgba(255, 255, 255, 0.85)", boxWidth: 10, boxHeight: 10, font: { size: 11 } } },
                      tooltip: { callbacks: { label: (c) => `${c.label}: ${rp(c.parsed)}` } } } },
       }));
     }
@@ -1296,7 +1296,183 @@
     sheetRoot.innerHTML = `<div class="overlay" data-act="dismiss"><div class="modal" role="dialog" aria-label="${esc(title)}">
       <header><h2>${esc(title)}</h2><button class="close" data-act="close" aria-label="Close">${icon("close")}</button></header>
       ${body}</div></div>`;
+    enhanceCombos();
+    enhanceDates();
     $("input:not([type=hidden]), select", sheetRoot)?.focus({ preventScroll: true });
+  }
+
+  // The native date popup cannot be styled, so date fields open a glass calendar of our own.
+  // The field stays a real type="date" input (value is still YYYY-MM-DD, set programmatically
+  // in places) but is read-only so only the calendar changes it; min/max are enforced by it.
+  let calBound = false;
+  function enhanceDates() {
+    if (!calBound) {
+      calBound = true;
+      document.addEventListener("pointerdown", (e) => {
+        if (e.target.closest?.(".cal") || e.target.closest?.('input[type="date"]')) return;
+        document.querySelectorAll(".cal").forEach((c) => { c.hidden = true; });
+      });
+    }
+    const pad = (n) => String(n).padStart(2, "0");
+    const key = (y, m, d) => { const x = new Date(y, m, d); return `${x.getFullYear()}-${pad(x.getMonth() + 1)}-${pad(x.getDate())}`; };
+    const chev = (dir) => `<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="${dir < 0 ? "M15 6l-6 6 6 6" : "M9 6l6 6-6 6"}"/></svg>`;
+    const months = Array.from({ length: 12 }, (_, i) => new Date(2000, i, 1).toLocaleDateString("en-US", { month: "short" }));
+    sheetRoot.querySelectorAll('input[type="date"]').forEach((inp) => {
+      if (inp.disabled) return;
+      inp.readOnly = true;
+      inp.setAttribute("autocomplete", "off");
+      const box = document.createElement("div");
+      box.className = "cal";
+      box.setAttribute("role", "dialog");
+      box.setAttribute("aria-label", "Choose a date");
+      box.hidden = true;
+      sheetRoot.appendChild(box);
+      let view = "days", y = 0, m = 0;
+      const okDay = (s) => (!inp.min || s >= inp.min) && (!inp.max || s <= inp.max);
+      const hide = () => { box.hidden = true; };
+      const draw = () => {
+        const sel = inp.value, t = today();
+        if (view === "months") {
+          const prevOff = inp.min && inp.min >= key(y, 0, 1), nextOff = inp.max && inp.max < key(y + 1, 0, 1);
+          box.innerHTML = `<div class="cal-head"><button type="button" class="cal-nav" data-cal="prev" aria-label="Previous year" ${prevOff ? "disabled" : ""}>${chev(-1)}</button>
+            <button type="button" class="cal-title" data-cal="days">${y}</button>
+            <button type="button" class="cal-nav" data-cal="next" aria-label="Next year" ${nextOff ? "disabled" : ""}>${chev(1)}</button></div>
+            <div class="cal-months">${months.map((n, i) => {
+              const off = (inp.min && key(y, i + 1, 0) < inp.min) || (inp.max && key(y, i, 1) > inp.max);
+              return `<button type="button" class="cal-m ${sel.startsWith(`${y}-${pad(i + 1)}`) ? "sel" : ""}" data-m="${i}" ${off ? "disabled" : ""}>${n}</button>`;
+            }).join("")}</div>`;
+          return;
+        }
+        const lead = (new Date(y, m, 1).getDay() + 6) % 7, n = new Date(y, m + 1, 0).getDate();
+        const prevOff = inp.min && inp.min >= key(y, m, 1), nextOff = inp.max && inp.max < key(y, m + 1, 1);
+        let cells = "";
+        for (let i = 0; i < lead; i++) cells += `<span></span>`;
+        for (let d = 1; d <= n; d++) {
+          const s = key(y, m, d);
+          cells += `<button type="button" class="cal-d ${s === sel ? "sel" : ""} ${s === t ? "today" : ""}" data-d="${s}" ${okDay(s) ? "" : "disabled"}>${d}</button>`;
+        }
+        box.innerHTML = `<div class="cal-head"><button type="button" class="cal-nav" data-cal="prev" aria-label="Previous month" ${prevOff ? "disabled" : ""}>${chev(-1)}</button>
+          <button type="button" class="cal-title" data-cal="months">${new Date(y, m, 1).toLocaleDateString("en-US", { month: "long", year: "numeric" })}</button>
+          <button type="button" class="cal-nav" data-cal="next" aria-label="Next month" ${nextOff ? "disabled" : ""}>${chev(1)}</button></div>
+          <div class="cal-week">${["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"].map((w) => `<span>${w}</span>`).join("")}</div>
+          <div class="cal-grid">${cells}</div>
+          <div class="cal-foot"><button type="button" class="cal-today" data-d="${t}" ${okDay(t) ? "" : "disabled"}>Today</button></div>`;
+      };
+      const open = () => {
+        document.querySelectorAll(".cal").forEach((c) => { if (c !== box) c.hidden = true; });
+        const base = inp.value || (inp.max && inp.max < today() ? inp.max : today());
+        y = Number(base.slice(0, 4)); m = Number(base.slice(5, 7)) - 1; view = "days";
+        draw();
+        place();
+        box.hidden = false;
+      };
+      const place = () => {
+        const r = inp.getBoundingClientRect(), w = Math.min(320, innerWidth - 24);
+        box.style.width = `${w}px`;
+        box.style.left = `${Math.max(12, Math.min(r.left, innerWidth - w - 12))}px`;
+        const below = innerHeight - r.bottom - 14, above = r.top - 14, up = below < 360 && above > below;
+        box.style.maxHeight = `${Math.max(240, up ? above : below)}px`;
+        box.style.top = up ? "auto" : `${r.bottom + 6}px`;
+        box.style.bottom = up ? `${innerHeight - r.top + 6}px` : "auto";
+      };
+      inp.addEventListener("click", () => (box.hidden ? open() : hide()));
+      inp.addEventListener("keydown", (e) => {
+        if (["Enter", " ", "ArrowDown"].includes(e.key)) { e.preventDefault(); open(); }
+        else if (e.key === "Escape" && !box.hidden) { e.stopPropagation(); hide(); }
+        else if ((e.key === "Backspace" || e.key === "Delete") && !inp.required) { inp.value = ""; inp.dispatchEvent(new Event("change", { bubbles: true })); }
+      });
+      box.addEventListener("click", (e) => {
+        const b = e.target.closest("button");
+        if (!b || b.disabled) return;
+        if (b.dataset.d) {
+          inp.value = b.dataset.d;
+          inp.dispatchEvent(new Event("input", { bubbles: true }));
+          inp.dispatchEvent(new Event("change", { bubbles: true }));
+          hide();
+          return;
+        }
+        if (b.dataset.m) { m = Number(b.dataset.m); view = "days"; return draw(); }
+        const step = b.dataset.cal === "prev" ? -1 : b.dataset.cal === "next" ? 1 : 0;
+        if (b.dataset.cal === "months") view = "months";
+        else if (b.dataset.cal === "days") view = "days";
+        else if (view === "months") y += step;
+        else { const x = new Date(y, m + step, 1); y = x.getFullYear(); m = x.getMonth(); }
+        draw();
+      });
+      // the browser scrolls a focused field into view after a moment: follow it instead of closing
+      $(".modal", sheetRoot)?.addEventListener("scroll", () => { if (!box.hidden) place(); }, { passive: true });
+      // a read-only field skips the browser's required check, so do it here
+      const form = inp.closest("form");
+      if (form && !form.dataset.dateGuard) {
+        form.dataset.dateGuard = "1";
+        form.addEventListener("submit", (e) => {
+          const bad = [...form.querySelectorAll('input[type="date"][required]')].find((i) => !i.value);
+          if (!bad) return;
+          e.preventDefault();
+          e.stopImmediatePropagation();
+          const err = $(".error", form);
+          if (err) err.textContent = "Pick a date.";
+        });
+      }
+    });
+  }
+
+  // A native <datalist> popup cannot be styled, so a text field with `list` gets a glass
+  // suggestion list of its own (same look as the select menu). Typing still accepts any text.
+  function enhanceCombos() {
+    sheetRoot.querySelectorAll("input[list]").forEach((inp) => {
+      const dl = document.getElementById(inp.getAttribute("list"));
+      if (!dl) return;
+      const values = [...dl.options].map((o) => o.value);
+      inp.removeAttribute("list");
+      dl.remove();
+      inp.autocomplete = "off";
+      const box = document.createElement("div");
+      box.className = "combo-list";
+      box.setAttribute("role", "listbox");
+      box.hidden = true;
+      sheetRoot.appendChild(box);
+      let items = [], active = -1;
+      const hide = () => { box.hidden = true; active = -1; };
+      const mark = () => items.forEach((el, i) => el.classList.toggle("active", i === active));
+      const pick = (v) => { inp.value = v; inp.dispatchEvent(new Event("input", { bubbles: true })); hide(); };
+      const show = () => {
+        const q = inp.value.trim().toLowerCase();
+        const list = values.filter((v) => v.toLowerCase().includes(q) && v.toLowerCase() !== q);
+        if (!list.length) return hide();
+        box.innerHTML = list.map((v) => `<div role="option" class="combo-opt" data-v="${esc(v)}">${esc(v)}</div>`).join("");
+        items = [...box.children];
+        const r = inp.getBoundingClientRect();
+        const below = innerHeight - r.bottom - 14, above = r.top - 14;
+        const up = below < 150 && above > below;
+        box.style.left = `${r.left}px`;
+        box.style.width = `${r.width}px`;
+        box.style.maxHeight = `${Math.max(100, Math.min(240, up ? above : below))}px`;
+        box.style.top = up ? "auto" : `${r.bottom + 6}px`;
+        box.style.bottom = up ? `${innerHeight - r.top + 6}px` : "auto";
+        box.hidden = false;
+        active = -1;
+      };
+      inp.addEventListener("focus", show);
+      inp.addEventListener("input", show);
+      inp.addEventListener("blur", () => setTimeout(hide, 120));
+      inp.addEventListener("keydown", (e) => {
+        if (box.hidden) return;
+        if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+          e.preventDefault();
+          active = (active + (e.key === "ArrowDown" ? 1 : -1) + items.length) % items.length;
+          mark();
+          items[active].scrollIntoView({ block: "nearest" });
+        } else if (e.key === "Enter" && active >= 0) { e.preventDefault(); pick(items[active].dataset.v); }
+        else if (e.key === "Escape") { e.stopPropagation(); hide(); }
+      });
+      // pointerdown (not click) so the field keeps focus and the blur timer does not eat the tap
+      box.addEventListener("pointerdown", (e) => {
+        const o = e.target.closest(".combo-opt");
+        if (o) { e.preventDefault(); pick(o.dataset.v); }
+      });
+      $(".modal", sheetRoot)?.addEventListener("scroll", () => { if (!box.hidden) show(); }, { passive: true });
+    });
   }
   function closeSheet() {
     const scan = S.scan;
@@ -1308,13 +1484,27 @@
     else {
       // a sheet that grew from a row shrinks back into it; any other sheet slides down
       const morph = m.style.viewTransitionName === "hero";
-      if (!morph) m.style.viewTransitionName = "modal";
-      let target = null;
-      transition(() => {
-        if ($(".modal", sheetRoot) === m) sheetRoot.innerHTML = "";
-        const el = morph && back && app.querySelector(`[data-act="${back.act}"][data-id="${CSS.escape(back.id || "")}"]`);
-        if (el) { target = el.closest(".wcard") || el; target.style.viewTransitionName = "hero"; }
-      }, morph ? "hero" : "close", () => { if (target) target.style.viewTransitionName = ""; });
+      if (!morph) {
+        // Plain sheet: a CSS slide-down on the live element. A view transition would flatten the
+        // glass (its snapshot drops the backdrop blur), so the close would not match the open.
+        m.style.viewTransitionName = "";
+        $(".overlay", sheetRoot)?.classList.add("closing");
+        let done = false;
+        const finish = () => {
+          if (done) return;
+          done = true;
+          if ($(".modal", sheetRoot) === m) sheetRoot.innerHTML = "";
+        };
+        m.addEventListener("animationend", (e) => { if (e.target === m) finish(); });
+        setTimeout(finish, 450); // safety net if the animation never fires
+      } else {
+        let target = null;
+        transition(() => {
+          if ($(".modal", sheetRoot) === m) sheetRoot.innerHTML = "";
+          const el = back && app.querySelector(`[data-act="${back.act}"][data-id="${CSS.escape(back.id || "")}"]`);
+          if (el) { target = el.closest(".wcard") || el; target.style.viewTransitionName = "hero"; }
+        }, "hero", () => { if (target) target.style.viewTransitionName = ""; });
+      }
     }
     if (scan?.saved) reload(); // a scan review was closed part-way: show what was saved
   }
@@ -1779,17 +1969,17 @@
       data: {
         labels: months.map((m) => new Date(m + "T00:00:00").toLocaleDateString("id-ID", { month: "short", year: "2-digit" })),
         datasets: [
-          { label: "Saved", data: months.map(savedBy), borderColor: "#ee4d8c", backgroundColor: "rgba(238, 77, 140,0.12)", fill: true, tension: 0.25, pointRadius: 2, spanGaps: false },
-          { label: "Plan", data: months.map(line), borderColor: "#77737c", borderDash: [5, 4], pointRadius: 0, fill: false },
+          { label: "Saved", data: months.map(savedBy), borderColor: "#f0899f", backgroundColor: "rgba(240, 137, 159, 0.16)", pointBackgroundColor: "#f0899f", fill: true, tension: 0.25, pointRadius: 2, spanGaps: false },
+          { label: "Plan", data: months.map(line), borderColor: "rgba(255, 255, 255, 0.55)", borderDash: [5, 4], pointRadius: 0, fill: false },
         ],
       },
       options: {
         maintainAspectRatio: false, animation: reducedMotion() ? false : undefined,
         interaction: { mode: "index", intersect: false },
-        plugins: { legend: { labels: { color: "#17161a", boxWidth: 10, boxHeight: 10, font: { size: 11 } } },
+        plugins: { legend: { labels: { color: "rgba(255, 255, 255, 0.85)", boxWidth: 10, boxHeight: 10, font: { size: 11 } } },
                    tooltip: { callbacks: { label: (c) => `${c.dataset.label}: ${rp(c.parsed.y)}` } } },
-        scales: { x: { ticks: { color: "#77737c", maxTicksLimit: 6 }, grid: { display: false } },
-                  y: { beginAtZero: true, ticks: { color: "#77737c", callback: (v) => compact(v) }, grid: { color: "#e7e4e1" } } },
+        scales: { x: { ticks: { color: "rgba(255, 255, 255, 0.6)", maxTicksLimit: 6 }, grid: { display: false } },
+                  y: { beginAtZero: true, ticks: { color: "rgba(255, 255, 255, 0.6)", callback: (v) => compact(v) }, grid: { color: "rgba(255, 255, 255, 0.1)" } } },
       },
     }));
   }
