@@ -33,6 +33,7 @@ Dashboard ────┘
 - **Dates:** `add` accepts an optional `date` (`YYYY-MM-DD`), defaulting to today. The bot drops malformed or future dates.
 - **Pricing:** fetched server-side only (bot or Apps Script), never in the browser.
   - Gold: stored as `ticker: "LM"` with the brand (e.g. "Antam") in `name`; buyback price from Emas API ID, updated daily around 08:30 WIB.
+    - Fallback: when the `EMAS_API_KEY` is missing, over its usage limit (HTTP 429) or failing, gold falls back to scraping the public `https://emas.maulanar.my.id/price-cards` page (the official `antam` 1 g card). Python: `scripts/gold_scraper.py` (standard library only, also a CLI) used by `pricing.get_gold_buyback()`, which adds `fallback_reason`. Edge Functions: `goldFromPage()` in `_shared/prices.ts`; for a past day (`goldBuybackOn`) the page counts only when it was published on or before that day and within 7 days. Redeploy `prices`, `ocr` and `telegram` after changing `_shared/prices.ts`.
   - Stocks: Yahoo Finance with `.JK` appended automatically, about 15 minutes delayed.
 - **Config:** one root `.env` serves both front-ends. The bot loads it through `TelegramBot/env_loader.py`; `scripts/build_dashboard_config.py` writes `Dashboard/config.js` containing only `APPS_SCRIPT_URL` and `API_SECRET`.
 

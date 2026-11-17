@@ -11,8 +11,17 @@ bot can still answer with partial data.
 """
 
 import os
+import sys
 import json
 import requests
+
+# Fallback: scrape the public price page when the API key is missing, rate
+# limited or otherwise failing (scripts/gold_scraper.py, standard library only).
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "scripts"))
+try:
+    import gold_scraper
+except Exception:  # pragma: no cover - the fallback is optional
+    gold_scraper = None
 
 UA = {"User-Agent": "Mozilla/5.0 (compatible; FinanceBot/1.0)"}
 
@@ -41,7 +50,43 @@ def get_gold_buyback():
     Official Antam 1-gram buyback price (IDR) from Emas API ID.
     Returns {"price": float|None, "source": str, "date": str?, "change": float?, "error": str?}.
     Buyback = the price Antam BUYS BACK from you = what your gold is worth.
+
+    Tries the API first; when it gives no price (no key, rate limit / quota
+    reached, HTTP error, empty reply) it falls back to scraping the public
+    price-cards page, which needs no key. "fallback_reason" says why.
     """
+    res = _gold_from_api()
+    if res.get("price") is not None:
+        return res
+    fb = _gold_from_page()
+    if fb.get("price") is not None:
+        fb["fallback_reason"] = res.get("error", "API gave no price")
+        return fb
+    res["error"] = f"{res.get('error', 'no price')}; page fallback failed: {fb.get('error')}"
+    return res
+
+
+def _gold_from_page():
+    """Fallback: the official Antam 1g card on emas.maulanar.my.id/price-cards."""
+    if gold_scraper is None:
+        return {"price": None, "source": "emas-page", "error": "gold_scraper not available"}
+    try:
+        for c in gold_scraper.scrape():
+            if (c["brand"].upper() == "ANTAM" and (c["source"] or "").lower() == "antam"
+                    and c["weight_gram"] == 1 and c["buyback"]):
+                bb = float(c["buyback"])
+                if not (500_000 <= bb <= 50_000_000):   # sanity bound
+                    continue
+                return {"price": bb,
+                        "source": "Emas API ID page (scraped, official Antam buyback)",
+                        "date": c["updated"] or "", "change": c["buyback_change"]}
+        return {"price": None, "source": "emas-page", "error": "no 1g Antam card on the page"}
+    except Exception as e:
+        return {"price": None, "source": "emas-page", "error": str(e)}
+
+
+def _gold_from_api():
+    """The keyed JSON API. Same return shape as get_gold_buyback()."""
     if not EMAS_API_KEY:
         return {"price": None, "source": "emas-api-id",
                 "error": "no EMAS_API_KEY set — register at "
@@ -55,6 +100,9 @@ def get_gold_buyback():
             headers={**UA, "X-API-Key": EMAS_API_KEY},
             timeout=20,
         )
+        if r.status_code >= 400:   # 429 = usage limit reached, 401/403 = bad key
+            return {"price": None, "source": "emas-api-id",
+                    "error": f"API HTTP {r.status_code}"}
         data = r.json()
         rows = data.get("data", [])
         # /api/prices returns a list; find the 1g Antam buyback
