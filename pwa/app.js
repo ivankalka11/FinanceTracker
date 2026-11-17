@@ -8,7 +8,7 @@
   const $ = (sel, root = document) => root.querySelector(sel);
   const app = $("#app");
   const sheetRoot = $("#sheet-root");
-  const TABS = ["home", "stats", "portfolio", "settings", "activity", "ledger", "plans", "notifications"];
+  const TABS = ["home", "stats", "portfolio", "settings", "activity", "ledger", "plans", "notifications", "loans"];
   let sb = null;
   let charts = [];
   let pricesDown = false;
@@ -28,6 +28,8 @@
     plansReady: false, // false until the plans migration has been run
     plansLedger: false, // false until the plan ledger migration (V2.6) has been run
     notifs: [], prefs: [], // this user's notifications (newest first) and per-kind settings
+    loans: [], loansReady: false, // money lent to members; false until the loans migration has been run
+    memberEmails: {}, loanFilter: "", // user id -> email (for the borrower picker), borrower filter on the Loans screen
   };
 
   const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) =>
@@ -97,6 +99,7 @@
       plans: S.plans, ledger: S.ledger, planHoldings: S.planHoldings, earmarks: S.earmarks,
       plansLedger: S.plansLedger, plansReady: S.plansReady,
       notifs: S.notifs, prefs: S.prefs,
+      loans: S.loans, loansReady: S.loansReady, memberEmails: S.memberEmails,
     });
   }
   function loadCache() {
@@ -123,7 +126,7 @@
   async function refresh() {
     const hid = S.household.id;
     const uid = S.session.user.id;
-    const [acc, opening, cat, tx, hold, sales, mem, tele, led, plans, contribs, notifs, prefs, phold, earm] = await Promise.all([
+    const [acc, opening, cat, tx, hold, sales, mem, tele, led, plans, contribs, notifs, prefs, phold, earm, loanRes, memRes] = await Promise.all([
       sb.from("account_balances").select("*").eq("household_id", hid).order("sort_order").order("name"),
       sb.from("accounts").select("id, opening_balance").eq("household_id", hid),
       sb.from("categories").select("*").eq("household_id", hid).order("name"),
@@ -142,7 +145,13 @@
       sb.from("notification_prefs").select("kind, enabled").eq("user_id", uid),
       sb.from("plan_holdings").select("*").eq("household_id", hid),
       sb.rpc("account_earmarks", { p_household: hid }),
+      sb.from("loans").select("*").eq("household_id", hid).order("date", { ascending: false }),
+      sb.rpc("household_members", { p_household: hid }),
     ]);
+    if (loanRes.error && isNetworkError(loanRes.error)) throw loanRes.error;
+    S.loansReady = !loanRes.error; // the table is missing until the loans migration runs
+    S.loans = (loanRes.data || []).map((l) => ({ ...l, amount: Number(l.amount) }));
+    S.memberEmails = memRes.error ? S.memberEmails : Object.fromEntries((memRes.data || []).map((m) => [m.user_id, m.email]));
     if (led.error && isNetworkError(led.error)) throw led.error;
     S.notifs = notifs.error ? [] : notifs.data;
     S.prefs = prefs.error ? [] : prefs.data;
@@ -276,7 +285,24 @@
   }
 
   // ------------------------------------------------------------ derived numbers
-  const signed = (t) => (t.type === "income" || t.type === "transfer-in" ? t.amount : -t.amount);
+  const signed = (t) => (t.type === "income" || t.type === "transfer-in" || t.type === "loan-in" ? t.amount : -t.amount);
+
+  // ------------------------------------------------------------ loans (money lent from an account to a member)
+  // Money lent is a `loan-out` entry on the account it came from; each repayment is a `loan-in` entry (never income or expense).
+  // The database keeps the status; the rules here mirror the loan functions in the loans migration.
+  const memberName = (uid) => {
+    const e = S.memberEmails[uid];
+    return e ? e.split("@")[0] : uid ? "A member" : "A former member";
+  };
+  const loanRepaid = (l) => S.txns.filter((t) => t.loan_id === l.id && t.type === "loan-in").reduce((s, t) => s + t.amount, 0);
+  const loanStats = (l) => {
+    const repaid = loanRepaid(l), outstanding = Math.max(l.amount - repaid, 0);
+    const overdue = outstanding > 0 && !!l.due_date && l.due_date < today();
+    return { repaid, outstanding, progress: l.amount ? Math.min(repaid / l.amount, 1) : 0, overdue, paid: outstanding === 0 };
+  };
+  const openLoans = () => S.loans.filter((l) => !loanStats(l).paid);
+  const totalOwed = () => openLoans().reduce((s, l) => s + loanStats(l).outstanding, 0);
+  const loanPayments = (l) => S.txns.filter((t) => t.loan_id === l.id && t.type === "loan-in");
 
   function periodRange(p) {
     const now = new Date(), y = now.getFullYear(), m = now.getMonth();
@@ -390,6 +416,7 @@
     { id: "behind", label: "Plan falling behind", hint: "When a plan drops below its plan line", kinds: ["plan_behind"] },
     { id: "deadlines", label: "Plan deadlines", hint: "30 and 7 days before the target date, and overdue", kinds: ["plan_deadline", "plan_overdue"] },
     { id: "monthly", label: "Monthly plan reminder", hint: "From the 25th, when this month's share is not in yet", kinds: ["plan_monthly"] },
+    { id: "loans", label: "Loan due dates", hint: "7 days before a loan is due, and when it is overdue", kinds: ["loan_due", "loan_overdue"] },
     { id: "close", label: "Month-close reminder", hint: "Last day of the month, then days 1, 3 and 7", kinds: ["month_close"], owner: true },
   ];
   const unreadCount = () => S.notifs.filter((n) => !n.read_at).length;
@@ -527,7 +554,7 @@
     if (!S.session) return viewLogin();
     if (!S.household) return viewOnboard();
     const tab = currentTab();
-    ({ home: viewHome, stats: viewStats, portfolio: viewPortfolio, settings: viewSettings, activity: viewActivity, ledger: viewLedger, plans: viewPlans, notifications: viewNotifSettings })[tab]();
+    ({ home: viewHome, stats: viewStats, portfolio: viewPortfolio, settings: viewSettings, activity: viewActivity, ledger: viewLedger, plans: viewPlans, notifications: viewNotifSettings, loans: viewLoans })[tab]();
   }
 
   // ------------------------------------------------------------ views: auth + onboarding
@@ -565,7 +592,7 @@
   // ------------------------------------------------------------ views: main tabs
   function txRow(t, i = 0) {
     const sign = signed(t);
-    const cat = t.type.startsWith("transfer") ? "Transfer" : categoryName(t.category_id);
+    const cat = t.type.startsWith("transfer") ? "Transfer" : t.type === "loan-in" ? "Loan repayment" : t.type === "loan-out" ? "Loan given" : categoryName(t.category_id);
     const title = t.description || cat;
     return `<button class="tx ${t._qid ? "pending" : ""}" style="--i:${Math.min(i, 12)}" ${t._qid ? "" : `data-act="tx" data-id="${t.id}"`}>
       <span class="logo">${esc(initials(title))}</span>
@@ -638,6 +665,7 @@
         ${due ? `<button class="card due-card" data-act="statement" data-id="${due}">
           <span class="grow"><b>Close ${esc(monthLabel(due))}</b><small>Check the figures and bank balances, then lock the month.</small></span>${icon("lock")}</button>` : ""}
         ${homePlans()}
+        ${homeLoans()}
       </div>
       <div class="sheet">
         <div class="row between"><h2>Recent transactions</h2><button class="link" data-go="activity">View all</button></div>
@@ -665,6 +693,19 @@
     </div>`;
   }
 
+  // Home: what the household still owes (FR-LON-10).
+  function homeLoans() {
+    if (!S.loansReady) return "";
+    const open = openLoans();
+    return `<div class="card">
+      <div class="row between"><h3>Loans</h3><button class="link" data-go="loans">${S.loans.length ? "See all" : "Open"}</button></div>
+      ${open.length
+        ? `<button class="mini-plan" data-go="loans"><span class="grow"><b class="num">${rp(totalOwed())}</b>
+            <small>still owed on ${open.length} loan${open.length === 1 ? "" : "s"}${open.some((l) => loanStats(l).overdue) ? " · some overdue" : ""}</small></span></button>`
+        : `<button class="wc-new" data-act="loan-new">+ Record a loan</button>`}
+    </div>`;
+  }
+
   function viewActivity() {
     const f = S.filter;
     paint("home", `
@@ -678,7 +719,7 @@
         <div class="filters">
           <input id="f-q" type="search" placeholder="Search" value="${esc(f.q)}" data-filter="q">
           <select id="f-type" data-filter="type">
-            ${[["", "All types"], ["income", "Income"], ["expense", "Expense"], ["invest", "Invest"], ["transfer", "Transfers"]]
+            ${[["", "All types"], ["income", "Income"], ["expense", "Expense"], ["invest", "Invest"], ["transfer", "Transfers"], ...(S.loansReady ? [["loan", "Loans"]] : [])]
               .map(([v, l]) => `<option value="${v}" ${f.type === v ? "selected" : ""}>${l}</option>`).join("")}
           </select>
           <select id="f-account" data-filter="account">
@@ -694,7 +735,7 @@
   function renderTxList() {
     const f = S.filter, q = f.q.trim().toLowerCase();
     const rows = allRows().filter((t) =>
-      (!f.type || (f.type === "transfer" ? t.type.startsWith("transfer") : t.type === f.type)) &&
+      (!f.type || (f.type === "transfer" || f.type === "loan" ? t.type.startsWith(f.type) : t.type === f.type)) &&
       (!f.account || t.account_id === f.account) &&
       (!q || `${t.description} ${categoryName(t.category_id)} ${accountName(t.account_id)}`.toLowerCase().includes(q)));
     const shown = rows.slice(0, 300);
@@ -845,6 +886,8 @@
           on === groups.length ? "All on" : on === 0 ? "All off" : `${on} of ${groups.length} on`}</small></span>${icon("next")}</button>`;
         })() : ""}
         <div class="section-label">Data</div>
+        ${S.loansReady ? `<button class="list-row" data-go="loans"><span class="grow">Loans<small>${openLoans().length
+          ? `${rp(totalOwed())} still owed` : "Nothing owed"}</small></span>${icon("next")}</button>` : ""}
         <button class="list-row" data-go="ledger"><span class="grow">Monthly statements<small>${lockedThrough()
           ? `Closed through ${esc(monthLabel(latestClosed()))}` : "No month closed yet"}</small></span>${icon("next")}</button>
         <div class="list-row"><span class="grow">Waiting to sync<small>Entries saved while offline</small></span><b class="num">${queue().length}</b></div>
@@ -929,6 +972,60 @@
       </div>`);
   }
 
+  // ------------------------------------------------------------ loans screen
+  function loanRow(l, i = 0) {
+    const st = loanStats(l);
+    const sub = st.paid ? `${rp(l.amount)} · repaid`
+      : `${rp(st.outstanding)} left of ${rp(l.amount)}${l.due_date ? ` · due ${dateLabel(l.due_date)}` : ""}`;
+    const tag = st.paid ? `<span class="tag ok">Paid</span>` : st.overdue ? `<span class="tag due">Overdue</span>` : `<span class="tag">Open</span>`;
+    return `<button class="tx plan-row" style="--i:${Math.min(i, 12)}" data-act="loan" data-id="${l.id}">
+      <span class="logo" aria-hidden="true">${esc(initials(memberName(l.borrower_id)))}</span>
+      <span class="body"><b>${esc(memberName(l.borrower_id))}</b><small>${esc(sub)}</small></span>
+      ${tag}<span class="bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(st.progress * 100)}"><i style="width:${(st.progress * 100).toFixed(1)}%"></i></span>
+    </button>`;
+  }
+
+  function viewLoans() {
+    if (!S.loansReady) {
+      return paint("home", `<div class="top">
+        <div class="row between"><button class="icon-btn" data-go="home" aria-label="Back">${icon("back")}</button>
+          <h1 class="title">Loans</h1><span style="width:40px"></span></div>
+        <div class="card"><b>Not set up yet</b><span class="muted" style="font-size:13px">Run <code>supabase/migrations/20261122000000_loans.sql</code> in the Supabase SQL Editor, then refresh.</span></div>
+      </div><div class="sheet"></div>`);
+    }
+    const by = S.loanFilter;
+    const mine = S.loans.filter((l) => !by || l.borrower_id === by);
+    const open = mine.filter((l) => !loanStats(l).paid).sort((a, b) => (a.due_date || "9999").localeCompare(b.due_date || "9999") || a.date.localeCompare(b.date));
+    const done = mine.filter((l) => loanStats(l).paid);
+    const owed = open.reduce((s, l) => s + loanStats(l).outstanding, 0);
+    const repaid = mine.reduce((s, l) => s + loanStats(l).repaid, 0);
+    const overdue = open.filter((l) => loanStats(l).overdue).length;
+    const borrowers = [...new Set(S.loans.map((l) => l.borrower_id).filter(Boolean))];
+    paint("home", `
+      <div class="top">
+        <div class="row between">
+          <button class="icon-btn" data-go="home" aria-label="Back">${icon("back")}</button>
+          <h1 class="title">Loans</h1><span style="width:40px"></span>
+        </div>
+        <div><div class="balance-label">${by ? `Still owed by ${esc(memberName(by))}` : "Still owed"}</div>
+          <div class="balance num"><small>Rp</small>${num(owed)}</div></div>
+        <div class="stats">
+          <div class="stat"><span>Open loans</span><b class="num">${open.length}</b></div>
+          <div class="stat"><span>Repaid</span><b class="num up">${compact(repaid)}</b></div>
+          <div class="stat"><span>Overdue</span><b class="num ${overdue ? "down" : ""}">${overdue}</b></div>
+        </div>
+        <div class="row"><button class="pill" data-act="loan-new">${icon("plus")} New loan</button></div>
+      </div>
+      <div class="sheet">
+        ${borrowers.length > 1 ? `<div class="filters"><select id="f-loan" data-loanfilter aria-label="Borrower">
+          <option value="">Everyone</option>${borrowers.map((u) => `<option value="${u}" ${by === u ? "selected" : ""}>${esc(memberName(u))}</option>`).join("")}</select></div>` : ""}
+        <h2>Open</h2>
+        ${open.map(loanRow).join("") || `<div class="empty">Nothing owed. Record a loan when a member borrows from an account, for example Bersama.</div>`}
+        ${done.length ? `<details class="fold"><summary>Paid (${done.length})</summary><div class="fold-body">${done.map(loanRow).join("")}</div></details>` : ""}
+        <p class="hint">A loan is money lent from one of your accounts to a member, who pays it back into an account. It is not an expense, and the repayment is not income.</p>
+      </div>`);
+  }
+
   // ------------------------------------------------------------ monthly statements (ledger closing)
   function viewLedger() {
     const thisMonth = monthStart(today());
@@ -984,6 +1081,7 @@
         st = {
           closing: snap, totals: snap, savings_rate: snap.savings_rate, realized_pl: snap.realized_pl,
           by_category: snap.by_category, checklist: snap.checklist, plans: snap.plans || [],
+          loans: snap.loans || [], loans_outstanding: snap.loans_outstanding || 0,
           accounts: check(accs).map((a) => ({ ...a, name: a.account_name })),
         };
       } else {
@@ -1015,11 +1113,12 @@
       ${cell("Invested", rp(n(T.invest)))}${cell("Net", rp(net), tone(net))}
       ${cell("Savings rate", st.savings_rate == null ? "n/a" : `${n(st.savings_rate).toLocaleString("id-ID")}%`)}
       ${cell("Realized P&amp;L", rp(n(st.realized_pl)), tone(n(st.realized_pl)))}
+      ${n(T.loan_in) || n(T.loan_out) ? cell("Loans given", rp(-n(T.loan_out)), "neg") + cell("Repayments received", rp(n(T.loan_in)), "pos") : ""}
       ${closed && st.closing.portfolio_value != null ? cell("Portfolio at closing", rp(n(st.closing.portfolio_value)))
         + cell("Unrealized P&amp;L", st.closing.unrealized_pl == null ? "at cost" : rp(n(st.closing.unrealized_pl)), tone(n(st.closing.unrealized_pl))) : ""}
     </div>`;
     const accounts = st.accounts.map((a) => {
-      const inflow = n(a.income) + n(a.transfer_in), out = n(a.expense) + n(a.invest) + n(a.transfer_out);
+      const inflow = n(a.income) + n(a.transfer_in) + n(a.loan_in), out = n(a.expense) + n(a.invest) + n(a.transfer_out) + n(a.loan_out);
       const bank = closed && a.bank_balance != null
         ? `<small>Bank ${rp(n(a.bank_balance))}${n(a.difference) ? ` · differs by ${rp(n(a.difference))}${a.difference_note ? `: ${esc(a.difference_note)}` : ""}` : " · matches"}</small>` : "";
       return `<div class="list-row"><span class="grow">${esc(a.name)}<small>Opening ${rp(n(a.opening))} · in ${compact(inflow)} · out ${compact(out)}</small>${bank}</span>
@@ -1028,6 +1127,14 @@
     const cats = (st.by_category || []).map((c) =>
       `<div class="list-row"><span class="grow">${esc(c.name)}</span><b class="num">${rp(n(c.amount))}</b></div>`).join("")
       || `<div class="empty">No expenses this month.</div>`;
+    // Loans still unpaid at the end of this month (FR-CLS-16). A closed statement shows the saved list.
+    const loansList = st.loans || [];
+    const owedTotal = n(st.loans_outstanding);
+    const loansSection = loansList.length ? `<div class="section-label">Loans outstanding at month end</div>
+      ${loansList.map((l) => `<div class="list-row"><span class="grow">${esc(l.borrower ? l.borrower.split("@")[0] : "A former member")}<small>Lent ${rp(n(l.amount))} on ${esc(dateLabel(l.date))}${
+          n(l.borrowed) ? " (this month)" : ""} · repaid ${rp(n(l.repaid_to_date))}${n(l.repaid_month) ? `, ${rp(n(l.repaid_month))} this month` : ""}${l.due_date ? ` · due ${esc(dateLabel(l.due_date))}` : ""}</small></span>
+          <b class="num neg">${rp(n(l.outstanding))}</b></div>`).join("")}
+      <div class="list-row"><span class="grow"><b>Total outstanding</b></span><b class="num neg">${rp(owedTotal)}</b></div>` : "";
     const ck = st.checklist || {};
     const waiting = queue().filter((q) => monthStart(q.date) === m).length;
     const checkRow = (ok, text) => `<div class="check ${ok ? "ok" : "warn"}">${ok ? "✓" : "!"} ${text}</div>`;
@@ -1035,6 +1142,7 @@
       ${checkRow(true, `${n(ck.entries)} entr${n(ck.entries) === 1 ? "y" : "ies"} this month`)}
       ${checkRow(!n(ck.uncategorised), `${n(ck.uncategorised)} without a category`)}
       ${checkRow(!n(ck.unassigned), `${n(ck.unassigned)} without an account`)}
+      ${loansList.length ? checkRow(true, `${loansList.length} loan${loansList.length === 1 ? "" : "s"} still unpaid, ${rp(owedTotal)} in total`) : ""}
       ${closed ? "" : checkRow(!waiting, `${waiting} waiting to sync on this device`)}`;
 
     let action = "";
@@ -1087,6 +1195,7 @@
       <div class="section-label">Accounts</div>${accounts}
       <div class="section-label">Expenses by category</div>${cats}
       ${plans ? `<div class="section-label">Plans: added this month</div>${plans}` : ""}
+      ${loansSection}
       ${checklist}${action}${history}`;
   }
 
@@ -1096,10 +1205,13 @@
     const q = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
     const lines = [
       ["Statement", monthLabel(m)], [],
-      ["Account", "Opening", "Income", "Expense", "Invest", "Transfer in", "Transfer out", "Closing", "Bank balance", "Difference", "Note"],
-      ...st.accounts.map((a) => [a.name, a.opening, a.income, a.expense, a.invest, a.transfer_in, a.transfer_out, a.closing,
+      ["Account", "Opening", "Income", "Expense", "Invest", "Transfer in", "Transfer out", "Loan repayment received", "Loan given", "Closing", "Bank balance", "Difference", "Note"],
+      ...st.accounts.map((a) => [a.name, a.opening, a.income, a.expense, a.invest, a.transfer_in, a.transfer_out, a.loan_in ?? 0, a.loan_out ?? 0, a.closing,
         a.bank_balance ?? "", a.difference ?? "", a.difference_note ?? ""]),
-      ["Total", T.opening, T.income, T.expense, T.invest, T.transfer_in, T.transfer_out, T.closing], [],
+      ["Total", T.opening, T.income, T.expense, T.invest, T.transfer_in, T.transfer_out, T.loan_in ?? 0, T.loan_out ?? 0, T.closing], [],
+      ...((st.loans || []).length ? [["Loan outstanding at month end", "Borrower", "Date", "Original amount", "Repaid this month", "Repaid to date", "Outstanding", "Due date"],
+        ...st.loans.map((l) => ["", l.borrower ? l.borrower.split("@")[0] : "", l.date, l.amount, l.repaid_month, l.repaid_to_date, l.outstanding, l.due_date ?? ""]),
+        ["Total outstanding", "", "", "", "", "", st.loans_outstanding], []] : []),
       ...((st.plans || []).length ? [["Plan", "Added this month", "Taken out", "Cash at month end", "Gold and stocks", "Priced at", "Saved at month end", "Target", "Progress %", "Status"],
         ...st.plans.map((p) => [p.name, p.contributed, p.withdrawals ?? 0, p.cash ?? p.saved, p.asset_value ?? 0, p.assets_priced ?? "", p.saved, p.target, p.progress, p.status]), []] : []),
       ["Date", "Type", "Category", "Description", "Account", "Amount"],
@@ -1691,6 +1803,93 @@
     </form>`);
   }
 
+  // ------------------------------------------------------------ loan sheets
+  const memberIds = () => (Object.keys(S.memberEmails).length ? Object.keys(S.memberEmails) : S.members.map((m) => m.user_id));
+
+  function sheetLoanForm(id) {
+    const l = S.loans.find((x) => x.id === id);
+    if (!l && !activeAccounts().length) return sheetAccount();
+    const pays = l ? loanPayments(l).length : 0;
+    const frozen = !!l && (pays > 0 || isLocked(l.date)); // amount, date and account are fixed once money has moved or the month is closed
+    const dis = frozen ? "disabled" : "";
+    const me = S.session.user.id;
+    openSheet(l ? "Edit loan" : "New loan", `<form data-form="loan">
+      <input type="hidden" name="id" value="${l ? l.id : ""}">
+      <label class="f">Who borrows it<select id="loan-borrower" name="borrower" required>${memberIds().map((u) =>
+        `<option value="${u}" ${u === (l ? l.borrower_id : me) ? "selected" : ""}>${esc(memberName(u))}${u === me ? " (you)" : ""}</option>`).join("")}</select></label>
+      <div class="two">
+        <label class="f">Amount (Rp)<input id="loan-amount" name="amount" inputmode="numeric" data-money required placeholder="0" value="${l ? num(l.amount) : ""}" ${dis}></label>
+        <label class="f">Lend from<select id="loan-account" name="account" ${dis}>${accountOptions(l?.account_id || store.get("ft.lastAccount", ""))}</select></label>
+      </div>
+      <div class="two">
+        <label class="f">Date<input id="loan-date" name="date" type="date" required value="${l?.date || today()}" min="${l ? "" : minDate()}" max="${today()}" ${dis}></label>
+        <label class="f">Due date (optional)<input id="loan-due" name="due_date" type="date" value="${l?.due_date || ""}"></label>
+      </div>
+      <label class="f">Note (optional)<input id="loan-note" name="note" value="${esc(l?.note || "")}" placeholder="Anything worth remembering"></label>
+      ${frozen ? `<p class="hint">${icon("lock")} ${pays ? "This loan has repayments, so its amount, date and account are fixed." : "This month is closed, so the amount, date and account are fixed."} You can still change the rest.</p>`
+        : `<p class="hint">The money leaves the account you pick. It is not counted as an expense, and the repayment will not count as income.</p>`}
+      <div class="error"></div>
+      <button class="pill" type="submit">${l ? "Save" : "Save loan"}</button>
+    </form>`);
+  }
+
+  function sheetLoan(id) {
+    const l = S.loans.find((x) => x.id === id);
+    if (!l) return;
+    const st = loanStats(l);
+    const cell = (name, value, cls = "") => `<div><span>${name}</span><b class="num ${cls}">${value}</b></div>`;
+    const pays = loanPayments(l).slice().sort((a, b) => b.date.localeCompare(a.date));
+    const rows = pays.map((t) => `<div class="list-row">
+        <span class="grow">${rp(t.amount)}<small>${esc(dateLabel(t.date))} · into ${esc(accountName(t.account_id))}${t.description && / - /.test(t.description) ? ` · ${esc(t.description.replace(/^Loan repayment from \S+ - /, ""))}` : ""}</small></span>
+        ${isLocked(t.date) ? icon("lock") : `<button class="link" data-act="loan-payment-delete" data-id="${t.id}">Remove</button>`}
+      </div>`).join("") || `<div class="empty">No repayments yet.</div>`;
+    const canDelete = !pays.length && !isLocked(l.date);
+    const lead = st.paid ? "Fully repaid."
+      : st.overdue ? `The due date (${esc(fullDate(l.due_date + "T00:00:00"))}) has passed with ${rp(st.outstanding)} still unpaid.`
+      : l.due_date ? `Due ${esc(fullDate(l.due_date + "T00:00:00"))}.` : "No due date set. Pay it back in any amounts.";
+    openSheet(`${memberName(l.borrower_id)}'s loan`, `<div class="plan-detail">
+      <div class="row between"><b class="num plan-pct">${Math.round(st.progress * 100)}%</b>${st.paid ? `<span class="tag ok">Paid</span>` : st.overdue ? `<span class="tag due">Overdue</span>` : `<span class="tag">Open</span>`}</div>
+      <span class="bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(st.progress * 100)}"><i style="width:${(st.progress * 100).toFixed(1)}%"></i></span>
+      <p class="hint" style="margin:0">${lead}</p>
+      <div class="st-grid">
+        ${cell("Lent", rp(l.amount))}${cell("Outstanding", rp(st.outstanding), st.outstanding ? "neg" : "pos")}
+        ${cell("Repaid", rp(st.repaid), "pos")}${cell("Borrower", esc(memberName(l.borrower_id)))}
+        ${cell("Lent on", esc(fullDate(l.date + "T00:00:00")))}${cell("Lent from", esc(accountName(l.account_id)))}
+      </div>
+      ${l.note ? `<p class="hint" style="margin:0">${esc(l.note)}</p>` : ""}
+      <div class="error"></div>
+      ${st.paid ? "" : `<div class="plan-actions"><button class="pill" type="button" data-act="loan-pay" data-id="${l.id}">${icon("plus")} Record a repayment</button></div>`}
+      <div class="section-label">Repayments</div>
+      ${rows}
+      <div class="section-label">Loan</div>
+      <div class="plan-actions">
+        <button class="pill ghost-light" type="button" data-act="loan-edit" data-id="${l.id}">Edit</button>
+        ${canDelete ? `<button class="pill danger" type="button" data-act="loan-delete" data-id="${l.id}">Delete loan</button>` : ""}
+      </div>
+      ${canDelete ? "" : `<p class="hint">${isLocked(l.date) ? "The month this loan was made in is closed, so it cannot be deleted." : "A loan with repayments cannot be deleted. Remove its repayments first."}</p>`}
+    </div>`);
+  }
+
+  function sheetLoanPay(id) {
+    const l = S.loans.find((x) => x.id === id);
+    if (!l) return;
+    const st = loanStats(l);
+    if (!activeAccounts().length) return sheetAccount();
+    openSheet("Record a repayment", `<form data-form="loanpay">
+      <input type="hidden" name="loan" value="${l.id}">
+      <p class="hint" style="margin-top:0">${rp(st.outstanding)} is still owed by ${esc(memberName(l.borrower_id))}.</p>
+      <div class="two">
+        <label class="f">Amount (Rp)<input id="lp-amount" name="amount" inputmode="numeric" data-money required value="${num(st.outstanding)}"></label>
+        <label class="f">Paid into<select id="lp-account" name="account">${accountOptions(l.account_id || "")}</select></label>
+      </div>
+      <label class="f">Date<input id="lp-date" name="date" type="date" required value="${today()}" min="${[minDate(), l.date].sort().pop()}" max="${today()}"></label>
+      <label class="f">Note (optional)<input id="lp-note" name="note" placeholder="e.g. Installment 1"></label>
+      <p class="hint">This records money paid back into the account. It raises the account's balance and lowers the amount owed. It is not counted as income.</p>
+      <div class="error"></div>
+      <button class="pill" type="submit">Save repayment</button>
+    </form>`);
+  }
+
   // ------------------------------------------------------------ notification list
   function sheetNotifications() {
     const unread = unreadCount(), read = S.notifs.length - unread;
@@ -1718,6 +1917,11 @@
       return toast("That plan has been deleted");
     }
     if (kind === "statement" && id) return sheetStatement(id);
+    if (kind === "loan") {
+      if (S.loans.some((l) => l.id === id)) return sheetLoan(id);
+      closeSheet();
+      return toast("That loan has been deleted");
+    }
     closeSheet();
   }
 
@@ -1948,6 +2152,49 @@
       sheetPlan(plan);
     },
 
+    async loan(fd) {
+      const id = fd.get("id"), amount = parseAmount(fd.get("amount"));
+      const frozen = id && $("#loan-amount").disabled;
+      if (!frozen && !(amount > 0)) throw new Error("Enter an amount above Rp 0.");
+      const from = S.accounts.find((a) => a.id === fd.get("account"));
+      if (!id && from && amount > from.balance) throw new Error(`${from.name} only has ${rp(from.balance)}.`);
+      const due = fd.get("due_date") || null;
+      const loanDate = fd.get("date") || S.loans.find((x) => x.id === id)?.date; // a locked date field is not submitted
+      if (due && due < loanDate) throw new Error("The due date cannot be before the loan date.");
+      if (id) {
+        const fields = { borrower: fd.get("borrower"), due_date: due, note: fd.get("note").trim() };
+        if (!frozen) Object.assign(fields, { amount, account: fd.get("account"), date: fd.get("date") });
+        check(await sb.rpc("update_loan", { p_loan: id, p_fields: fields }));
+      } else {
+        const saved = check(await sb.rpc("add_loan", {
+          p_household: S.household.id, p_account: fd.get("account"), p_amount: amount, p_borrower: fd.get("borrower"),
+          p_date: fd.get("date"), p_due_date: due, p_note: fd.get("note").trim(), p_source: "web",
+        }));
+        store.set("ft.lastAccount", fd.get("account"));
+        closeSheet();
+        await reload("Loan saved");
+        return sheetLoan(saved);
+      }
+      closeSheet();
+      await reload("Loan updated");
+      sheetLoan(id);
+    },
+
+    async loanpay(fd) {
+      const loan = fd.get("loan"), amount = parseAmount(fd.get("amount"));
+      if (!(amount > 0)) throw new Error("Enter an amount above Rp 0.");
+      const l = S.loans.find((x) => x.id === loan);
+      if (l && amount > loanStats(l).outstanding) throw new Error(`Only ${rp(loanStats(l).outstanding)} is still owed.`);
+      check(await sb.rpc("add_loan_payment", {
+        p_loan: loan, p_account: fd.get("account"), p_amount: amount, p_date: fd.get("date"),
+        p_note: fd.get("note").trim(), p_source: "web",
+      }));
+      store.set("ft.lastAccount", fd.get("account"));
+      closeSheet();
+      await reload("Repayment saved");
+      sheetLoan(loan);
+    },
+
     async reopen(fd) {
       const m = fd.get("month"), reason = fd.get("reason").trim();
       if (!reason) throw new Error("Say why the month is being reopened.");
@@ -2004,7 +2251,11 @@
     member: sheetMember,
     close: closeSheet,
     reload: () => reload("Up to date"),
-    tx: (el) => openFrom(el, () => sheetTx(el.dataset.id)),
+    tx: (el) => {
+      const t = S.txns.find((x) => x.id === el.dataset.id);
+      if (t?.loan_id && S.loans.some((l) => l.id === t.loan_id)) return openFrom(el, () => sheetLoan(t.loan_id)); // loan entries live on the loan
+      return openFrom(el, () => sheetTx(el.dataset.id));
+    },
     statement: (el) => openFrom(el, () => sheetStatement(el.dataset.id)),
     "statement-print": () => window.print(),
     "statement-csv": (el) => downloadCsv(el.dataset.id),
@@ -2222,6 +2473,33 @@
       sheetPlan(c.plan_id);
     },
 
+    "loan-new": () => sheetLoanForm(),
+    loan: (el) => openFrom(el, () => sheetLoan(el.dataset.id)),
+    "loan-edit": (el) => sheetLoanForm(el.dataset.id),
+    "loan-pay": (el) => sheetLoanPay(el.dataset.id),
+
+    async "loan-delete"(el) {
+      if (armed !== el.dataset.id) { armed = el.dataset.id; el.textContent = "Tap again to delete"; return; }
+      armed = null;
+      check(await sb.rpc("delete_loan", { p_loan: el.dataset.id }));
+      hero = null;
+      const m = $(".modal", sheetRoot);
+      if (m) m.style.viewTransitionName = "";
+      closeSheet();
+      await reload("Loan deleted");
+    },
+
+    async "loan-payment-delete"(el) {
+      const t = S.txns.find((x) => x.id === el.dataset.id);
+      if (!t) return;
+      if (armed !== t.id) { armed = t.id; el.textContent = "Tap again to remove"; return; }
+      armed = null;
+      check(await sb.rpc("delete_loan_payment", { p_txn: t.id }));
+      closeSheet();
+      await reload("Repayment removed");
+      sheetLoan(t.loan_id);
+    },
+
     async "account-archive"(el) {
       const a = S.accounts.find((x) => x.id === el.dataset.id);
       check(await sb.from("accounts").update({ archived: !a.archived }).eq("id", a.id));
@@ -2250,6 +2528,14 @@
       const errEl = $(".error", sheetRoot);
       if (errEl) errEl.textContent = msg; else toast(msg);
     }
+  });
+
+  // The on-screen keyboard covers the lower half of a sheet on iPhone (and some Androids):
+  // once it is up, scroll the field being typed in back into view.
+  document.addEventListener("focusin", (ev) => {
+    const el = ev.target;
+    if (!el.matches?.("input, select, textarea") || !el.closest(".modal")) return;
+    setTimeout(() => el.scrollIntoView({ block: "center", behavior: "smooth" }), 320);
   });
 
   document.addEventListener("input", (ev) => {
@@ -2291,6 +2577,11 @@
         });
       return;
     }
+    if (el.dataset.loanfilter !== undefined) { // Loans screen: show one borrower's loans
+      S.loanFilter = el.value;
+      route();
+      return;
+    }
     if (el.id === "ctr-tx") { // money into a plan from a transaction: take its amount and date
       const o = el.selectedOptions[0];
       if (o?.dataset.amount) {
@@ -2305,7 +2596,7 @@
     runScan(file);
   });
 
-  const TAB_ORDER = { home: 0, activity: 0.5, plans: 0.6, stats: 1, portfolio: 2, settings: 3, notifications: 3.4, ledger: 3.5 };
+  const TAB_ORDER = { home: 0, activity: 0.5, plans: 0.6, loans: 0.7, stats: 1, portfolio: 2, settings: 3, notifications: 3.4, ledger: 3.5 };
   let lastTab = currentTab();
   window.addEventListener("hashchange", () => {
     const tab = currentTab();

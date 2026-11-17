@@ -14,6 +14,7 @@ To run your own copy, follow [`setup.md`](setup.md) (about 30 minutes). What is 
 - **Portfolio**: gold (Antam buyback) and IDX stocks, weighted-average cost, live profit and loss, sell tracking and realized P&L.
 - **Monthly closing**: close a month to save its statement and lock its entries; owners can reopen the latest month.
 - **Plans**: savings goals with a target amount and date. A plan is a set-aside on a real account, with its own ledger (add, take out, adjust), and can include gold and stocks you already hold. Each account shows balance, set aside and free to spend.
+- **Loans**: lend money from an account (for example Bersama) to Ivan or Mely and record their repayments back into an account. Loans are not expenses and repayments are not income; each monthly statement lists the loans still unpaid at month end.
 - **Notifications**: plan milestones, falling behind, deadlines and month-close reminders, in an in-app bell with per-kind switches. Phone push delivery is not built yet.
 - **Households**: invite members by email; owners and members have different rights.
 

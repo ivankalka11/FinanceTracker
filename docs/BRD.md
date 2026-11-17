@@ -1,8 +1,8 @@
 # Business Requirements Document (BRD)
 
 **Project:** FinanceTracker
-**Document version:** 1.0
-**Date:** 2026-11-15
+**Document version:** 1.1 (adds Loans, V2.9)
+**Date:** 2026-11-16
 **Owner:** Ivan
 **Status:** Living document. V1 is in use; V2 is being built.
 
@@ -32,6 +32,7 @@ FinanceTracker V1 solved this with one Google Sheet as the database, a Google Ap
 | P6 | Third-party apps own the data and may charge for it. | Lock-in, privacy exposure, recurring cost. |
 | P7 | There is no month-end close. Past months can be changed at any time, and nobody checks the recorded balances against the bank. | Reports for a finished month keep moving; errors go unnoticed; there is no fixed record to look back on. |
 | P8 | Savings goals ("Buy Laptop", "Marriage", "AWS Certification") live in people's heads, not in the system. | No one knows how far along a goal is, how much to save each month, or when a goal is falling behind. |
+| P9 | Money taken out of a shared account (usually Bersama) for Ivan or Mely to use is not tracked as a loan. It looks like an expense, so the joint account's balance drops with nothing to show it must be paid back. | Nobody knows who owes the household how much, repayments look like income, and month-end statements hide the amount still owed. |
 
 ## 4. Business objectives
 
@@ -46,6 +47,7 @@ FinanceTracker V1 solved this with one Google Sheet as the database, a Google Ap
 | BO-7 | Work well on a phone. | V2 app installs to the home screen, works offline and queues entries until back online. |
 | BO-8 | Close every month with a fixed, reconciled statement. | Each month is closed by the owner within 7 days of month end; closed months cannot change without a recorded reopen. |
 | BO-9 | Make savings goals visible and on track. | Every goal shows progress, the monthly amount needed, and its status; the owner is notified of milestones and of goals falling behind. |
+| BO-10 | Track money lent from household accounts until it is paid back. | Every loan shows who owes it, the amount repaid and the amount outstanding; every month-end statement lists the loans still unpaid at that date. |
 
 ## 5. Scope
 
@@ -61,6 +63,7 @@ FinanceTracker V1 solved this with one Google Sheet as the database, a Google Ap
 - One-time import of V1 Sheet data into V2.
 - Monthly ledger closing: a month-end statement produced only when the owner closes the month by hand, after which the month is locked.
 - Plans (savings goals) with progress tracking and notifications to the owner.
+- Loans: money taken out of a household account (for example Bersama) and lent to a household member, repaid in one or more repayments back into an account, and listed on each month-end statement while unpaid.
 
 ### 5.2 Out of scope
 
@@ -71,6 +74,8 @@ FinanceTracker V1 solved this with one Google Sheet as the database, a Google Ap
 - Financial advice or forecasts (a plan's "monthly amount needed" is simple arithmetic, not advice).
 - Automatic month-end closing. A month is only ever closed by the owner.
 - Moving money into a plan. A plan tracks money set aside; it does not hold or move it.
+- Loans to or from people outside the household, interest, installment schedules and late fees. A loan here is principal only; repayments can be any amount at any time.
+- Loans and repayments are recorded, not made. The system never moves real money.
 - Public multi-tenant SaaS. The system is for one household (V2's data model allows more, but this is not a goal).
 
 ## 6. Stakeholders
@@ -146,6 +151,24 @@ Priority: **M** = must have, **S** = should have, **C** = could have.
 | BR-38 | The closing statement shows, per plan, the cash at the start and end of the month, money added and taken out, the value of gold and stocks, and whether those were valued at the market price of the month's last day (shown with the date) or at cost. | C | BO-8, BO-9 |
 | BR-39 | The user is warned when an expense takes an account below the amount set aside for plans. | C | BO-9 |
 
+#### 8.3 Loans (money lent from an account to a member)
+
+A loan is money taken out of one of the household's accounts, often the joint account (Bersama), for a household member (Ivan or Mely) to use. The member owes it and pays it back, in one or more repayments, into an account. Neither the loan nor its repayments count as income or expense.
+
+| ID | Requirement | Priority | Objective |
+| --- | --- | --- | --- |
+| BR-40 | Users can record a loan from an account: amount, date, the household member who borrows it, an optional due date and a note. The account balance goes down by the amount. | M | BO-10, P9 |
+| BR-41 | A loan and its repayments are not income or expense. They change account balances and the loan balance only, and are left out of income, expense and savings-rate figures, as transfers are (BR-02). | M | BO-10, P9 |
+| BR-42 | Users can record a repayment against a loan: amount, date, the account it is paid into (the loan's own account by default), and a note. The repayment raises that account's balance and lowers the loan's outstanding amount. Part repayments are allowed; a repayment can never exceed the outstanding amount. | M | BO-10 |
+| BR-43 | A loan shows its borrower, original amount, total repaid, outstanding amount, due date and status (open or paid). It becomes paid when the outstanding amount reaches zero. | M | BO-10 |
+| BR-44 | A Loans screen lists open loans first, with the total outstanding, and can be filtered by borrower. Paid loans stay in a history list. | M | BO-10 |
+| BR-45 | The monthly closing statement lists every loan still outstanding at the end of that month: borrower, original amount, lent and repaid during the month, and the outstanding amount at month end; plus the total outstanding. This list is stored with the closed statement and does not change afterwards. | M | BO-8, BO-10 |
+| BR-46 | A loan or repayment dated in a closed month cannot be added, edited or deleted, like any other entry (BR-23). | M | BO-8 |
+| BR-47 | A loan with repayments cannot be deleted; a loan without repayments can be edited or deleted in an open month. Repayments can be deleted in an open month, which raises the outstanding amount again. | S | BO-10 |
+| BR-48 | The owner is reminded when a loan's due date is 7 days away and when it is overdue, and can switch these notifications off. | C | BO-10 |
+| BR-49 | The Home screen shows the total outstanding loans. A loan can be viewed by borrower so each member sees what they still owe. | S | BO-10 |
+| BR-50 | The app refuses to lend more than the chosen account currently holds. | S | BO-10 |
+
 ## 9. Success criteria
 
 1. At least 90% of the household's spending in a month is recorded in the system.
@@ -156,6 +179,7 @@ Priority: **M** = must have, **S** = should have, **C** = could have.
 6. No household data is readable by anyone outside the household.
 7. Every finished month has a closed statement, and no closed month changes without a recorded reopen.
 8. Every active plan shows its progress, and the owner gets each milestone and "behind" notification on time.
+9. Income and expense totals contain no loan money, and every closed statement lists the loans still unpaid at its month end, with an outstanding total equal to the sum of the loan balances on that date.
 
 ## 10. Assumptions
 
@@ -186,6 +210,8 @@ Priority: **M** = must have, **S** = should have, **C** = could have.
 | The owner forgets to close a month. | Medium | Medium | Reminders on the last day and after; the next month still works while the previous one is open, and the draft statement is always available. |
 | A late receipt belongs to a closed month. | Medium | Low | The owner reopens the month with a reason, or records the entry in the current month. |
 | Push notifications are not delivered (iPhone needs the app installed to the home screen; the user may block them). | Medium | Medium | Show plan alerts inside the app as well; add Telegram as a second channel when the bot is live. |
+| A loan is entered as an expense, or a repayment as income, by mistake. | Medium | Medium | Loans and repayments have their own forms; the ordinary add form does not offer them, and the database refuses them there. |
+| A repayment is dated before its loan, or in a closed month. | Low | Low | The system refuses it and says why; the owner reopens the month if needed. |
 
 ## 13. Roadmap
 
@@ -199,6 +225,7 @@ Priority: **M** = must have, **S** = should have, **C** = could have.
 | V2.5 | Plans module with progress and notifications (database, plans screens, in-app bell and notification settings). | Done, except Web Push delivery |
 | V2.6 | Plan ledger (add, take out, adjust), gold and stocks inside plans, set-aside and free-to-spend per account, plan section of the statement with prices. | Done (migration run on the live Supabase project) |
 | V2.7 | Sale proceeds go into plan cash; the statement values plan assets at the price of the month's last day. | Done in code (migration `20261120000000_plan_sale_and_month_end.sql` and the `prices` function still have to be deployed) |
+| V2.9 | Loans: lend from an account to a household member, record repayments, list unpaid loans on each month-end statement. | Done in code (migration `20261122000000_loans.sql` still has to be run) |
 | Next | Web Push delivery of notifications (VAPID keys, sending function, per-device switch). | Planned |
 
 ## 14. Approval

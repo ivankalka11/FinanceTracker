@@ -1,8 +1,8 @@
 # Software Requirements Specification (SRS)
 
 **Project:** FinanceTracker
-**Document version:** 1.0
-**Date:** 2026-11-15
+**Document version:** 1.1 (adds Loans, V2.9)
+**Date:** 2026-11-16
 **Related:** [BRD.md](BRD.md), [../README.md](../README.md), [../setup.md](../setup.md)
 
 ---
@@ -28,7 +28,10 @@ FinanceTracker records a household's income, expenses, transfers and investments
 | --- | --- |
 | Household | The group whose data is shared. V2 data is scoped by `household_id`. |
 | Account | A savings account the household tracks (V1: Ivan, Mely, Bersama). |
-| Transaction | One row of type `income`, `expense`, `invest`, `transfer-out` or `transfer-in`. |
+| Transaction | One row of type `income`, `expense`, `invest`, `transfer-out`, `transfer-in`, `loan-in` or `loan-out`. |
+| Loan | Money taken out of one household account and lent to a household member (the borrower), who pays it back. Represented by a `loan-out` transaction on the account it came from. |
+| Repayment | A `loan-in` transaction linked to a loan by `loan_id`. Raises the receiving account's balance and lowers the loan's outstanding amount. |
+| Outstanding | A loan's amount minus its repayments dated on or before the day being looked at. |
 | Transfer | Two linked transactions (`transfer-out` + `transfer-in`) sharing a `transfer_group`; excluded from income and expense totals. |
 | Holding / lot | One purchase of gold (grams) or stock (shares) at a unit price. |
 | Position | All lots of one asset combined, valued at weighted-average cost. |
@@ -127,7 +130,7 @@ Priority: **M** must, **S** should, **C** could. "Version" says where the requir
 | ID | Requirement | Pri | Version | Trace |
 | --- | --- | --- | --- | --- |
 | FR-ACC-01 | Users can create, rename, reorder and archive accounts, each with an opening balance. | S | V2 | BR-16 |
-| FR-ACC-02 | Account balance = opening balance + income + transfer-in − expense − invest − transfer-out for that account. | M | V1, V2 | BR-03 |
+| FR-ACC-02 | Account balance = opening balance + income + transfer-in + loan-in − expense − invest − transfer-out − loan-out for that account. (`loan-in` and `loan-out` exist from V2.9 only; V1 has neither.) | M | V1, V2 | BR-03, BR-40 |
 | FR-ACC-03 | V1 accounts are the fixed list `Ivan`, `Mely`, `Bersama`, kept in sync across `bot.py`, the dashboard and `code.gs`. | M | V1 | BR-03 |
 | FR-ACC-04 | Users can create and rename categories. Deleting a category leaves its transactions uncategorised. | S | V2 | BR-16 |
 | FR-ACC-05 | A transaction may have no account ("unassigned"), for example after its account is deleted. | S | V2 | BR-03 |
@@ -187,6 +190,7 @@ Priority: **M** must, **S** should, **C** could. "Version" says where the requir
 | FR-RPT-03 | For the chosen period it shows income, expense, savings rate (`(income − expense) / income`) and a donut chart of expenses by category. | M | V1, V2 | BR-10 |
 | FR-RPT-04 | A bar chart shows income and expense for the last 6 months. | S | V2 | BR-10 |
 | FR-RPT-05 | Amounts are formatted as Rupiah (`id-ID` locale). | M | V1, V2 | BR-17 |
+| FR-RPT-06 | `loan-in` and `loan-out` rows are excluded from income, expense, savings-rate, category and 6-month figures, as transfers are. The Activity list shows them with their own label ("Loan given", "Loan repayment") and the borrower. | M | V2.9 | BR-41 |
 
 ### 3.8 Scanning (OCR)
 
@@ -257,6 +261,9 @@ A *period* is one calendar month in Asia/Jakarta time. A period is **open** unti
 | FR-CLS-12 | The owner is reminded on the last day of the month from 16:00 WIB (the last scheduled check of the day), and on days 1, 3 and 7 of the next month while the previous month is still open. Uses the notification channel of section 3.14. | S | V2.5 | BR-27 |
 | FR-CLS-13 | Investment holdings are not locked by closing; the statement stores their market value and unrealized P&L at the moment of closing. | M | V2 | BR-20 |
 | FR-CLS-14 | V1 (Sheet) has no closing; the feature is V2 only. | M | V2 | — |
+| FR-CLS-15 | Each per-account row of the statement also carries `loan_in` (repayments received) and `loan_out` (loans given), so that closing = opening + income + transfer_in + loan_in − expense − invest − transfer_out − loan_out. Loan lines are shown apart from income and expense and are not part of the savings rate. | M | V2.9 | BR-20, BR-41 |
+| FR-CLS-16 | The statement has a **Loans outstanding** section: every loan dated on or before the last day of the period whose outstanding amount at that day is above zero. Per loan: borrower, original amount, lent in the period, repaid in the period, repaid to date, outstanding at period end, due date. Below it, the total outstanding. The draft computes it live (`period_statement`); closing stores it in `ledger_closings.loans` (JSON) with `loans_outstanding` (total), and a closed statement shows the stored copy. | M | V2.9 | BR-45 |
+| FR-CLS-17 | A loan fully repaid on or before the last day of the period does not appear in that period's Loans section, but a loan repaid later still appears in every earlier statement in which it was unpaid. Repayments dated after the period end never change a closed statement. | M | V2.9 | BR-45 |
 
 ### 3.13 Plans (V2.5, plan ledger V2.6)
 
@@ -295,6 +302,28 @@ A *period* is one calendar month in Asia/Jakarta time. A period is **open** unti
 | FR-NTF-06 | Tapping a notification opens the related plan or statement. | S | V2.5 | BR-33 |
 | FR-NTF-07 | On iPhone, push is only offered once the app is installed to the home screen; the app explains this. | S | Planned | BR-33 |
 | FR-NTF-08 | Milestone and achieved notifications are also checked immediately after a contribution is saved, not only by the daily job. | S | V2.5 | BR-32 |
+
+### 3.14a Loans (V2.9)
+
+V2 only. A loan is money lent from a household account to a household member. The money itself is a `loan-out` transaction on the account it came from; each repayment is a `loan-in` transaction on the account that receives it. Both carry `loan_id`, so balances, the month lock (FR-CLS-07) and the activity list work without special cases. The `loans` table holds the terms.
+
+| ID | Requirement | Pri | Version | Trace |
+| --- | --- | --- | --- | --- |
+| FR-LON-01 | Users can add a loan (`add_loan` RPC) with: account (required, the money leaves it), amount (> 0, required), date (default today WIB, not in a closed month), borrower (required, a household member), due date (optional, not before the loan date) and note. In one transaction it writes the `loans` row and a `loan-out` transaction for the amount, so the account balance falls by the amount. | M | V2.9 | BR-40 |
+| FR-LON-02 | The borrower must be a current member of the household (`members`). The borrower is the person who owes the money; it does not change which account is used. | M | V2.9 | BR-40 |
+| FR-LON-03 | Users can add a repayment to a loan (`add_loan_payment` RPC): amount (> 0), date (default today, not before the loan date, not in a closed month), receiving account (required; the app offers the loan's own account first) and note. It writes a `loan-in` transaction with the loan's `loan_id`. A repayment may be partial. The amount may not exceed the loan's outstanding amount at the time of saving; the error says how much is still owed. | M | V2.9 | BR-42 |
+| FR-LON-04 | A loan's `repaid` = sum of its `loan-in` transactions; `outstanding` = amount − repaid. Status is `open` while outstanding > 0 and `paid` when it reaches 0, set by the database from the repayments, not typed in. Deleting a repayment reopens a paid loan. | M | V2.9 | BR-43 |
+| FR-LON-05 | `loan-in` and `loan-out` rows are excluded from income, expense and savings rate (FR-RPT-06) and from category totals. They are included in account balances (FR-ACC-02). They are created, changed and removed only by the loan RPCs: a trigger on `transactions` (`guard_loan_txn`) refuses any direct insert, update or delete of these two types, and the ordinary add form does not offer them. | M | V2.9 | BR-41 |
+| FR-LON-06 | A **Loans** screen (opened from Home or Settings) lists open loans first, each with borrower, original amount, repaid, outstanding, due date and a progress bar, with the total outstanding on top. A filter selects one borrower. Paid loans are in a separate collapsed list. Tapping a loan opens its detail with the repayment history, a **Record a repayment** action and Edit / Delete where allowed. | M | V2.9 | BR-44 |
+| FR-LON-07 | Edit: while a loan has no repayments and its date is in an open month, any field can change (including amount, account and borrower; the linked `loan-out` follows). With repayments, only borrower, due date and note can change. Delete: only a loan with no repayments, in an open month (`delete_loan` removes the loan and its `loan-out`). A repayment can be deleted in an open month (`delete_loan_payment`). | S | V2.9 | BR-47 |
+| FR-LON-08 | Loan entries dated in a closed month cannot be added, edited or deleted (FR-CLS-07 applies to the linked transactions). Loan terms that do not touch money (due date, note, borrower) can still be edited. | M | V2.9 | BR-46 |
+| FR-LON-09 | Deleting an account that holds loan transactions follows DR-2 (the reference is set to null; the loan stays). Archiving is preferred and the app says so. | S | V2.9 | BR-40 |
+| FR-LON-10 | Home shows the total outstanding for the household; the Loans filter by borrower shows what each member still owes. | S | V2.9 | BR-49 |
+| FR-LON-11 | Notifications (FR-NTF) for loans, to the owner and to members who turn them on: due date 7 days away, and overdue (once, then weekly while still unpaid). Kinds `loan_due` and `loan_overdue`; they join the notification settings as one switch. | C | V2.9 | BR-48 |
+| FR-LON-12 | Loans and repayments need a connection. They are not put in the offline queue (a repayment depends on the loan's current balance); offline, the form shows "You are offline. Try again when connected." | S | V2.9 | BR-14 |
+| FR-LON-13 | The statement checklist (FR-CLS-04) shows a line with the number of unpaid loans and their total, for information. They do not block closing. | S | V2.9 | BR-45 |
+| FR-LON-14 | CSV export of a closed statement (FR-CLS-11) includes the Loans outstanding section. | S | V2.9 | BR-26, BR-45 |
+| FR-LON-15 | The app refuses a new loan larger than the chosen account's current balance and says what the account holds. The database does not enforce this. | S | V2.9 | BR-50 |
 
 ### 3.15 V1 API (Apps Script)
 
@@ -338,6 +367,13 @@ All calls go to the `/exec` URL with `?action=...` and the shared secret.
 | `unassign_holding_from_plan(p_plan, p_holding, p_quantity, p_price, p_date)` | RPC | Release a lot (all of it when no quantity is given); writes an `asset_out` entry. |
 | `account_earmarks(p_household)` | RPC | Cash set aside for plans, per account. |
 | `set_month_end_prices(p_household, p_month, p_prices)` | RPC | Owner-only: saves market prices (each with its `price_date`) used to value plan assets in a month's statement. |
+| `add_loan(p_household, p_account, p_amount, p_borrower, p_date, p_due_date, p_note, p_source)` | RPC | Atomic: writes the loan and its `loan-out` transaction. Checks the borrower is a member and the month is open. Returns the loan id. |
+| `update_loan(p_loan, p_fields)` | RPC | Edits a loan under the rules of FR-LON-07 / FR-LON-08. |
+| `delete_loan(p_loan)` | RPC | Deletes a loan with no repayments, and its `loan-out`. |
+| `add_loan_payment(p_loan, p_account, p_amount, p_date, p_note, p_source)` | RPC | Writes a `loan-in` transaction; refuses more than the outstanding amount; refreshes the loan status. |
+| `delete_loan_payment(p_txn)` | RPC | Removes a repayment in an open month and refreshes the loan's status. |
+| `household_members(p_household)` | RPC | Members with their email (user id, role, email), for the borrower picker. Members only. |
+| `private.loan_figures(p_household, p_month)` | internal | Loans unpaid at month end, as JSON. Used by `period_statement` and by the closing snapshot trigger. |
 | `notify` | Edge Function (planned) | Daily job: works out due notifications and sends Web Push / Telegram. |
 
 ## 4. Data requirements
@@ -376,6 +412,16 @@ Ledger tables (built, migration `20261117000000_ledger_closing.sql`), plan and n
 | `push_subscriptions` | `id`, `user_id`, `endpoint` (unique), `p256dh`, `auth`, `user_agent`, `created_at` | Per device. |
 | `notification_prefs` | `user_id`, `kind`, `enabled` | Missing row = on for owners, off for other members (FR-PLN-10). |
 
+Loans (built, migration `20261122000000_loans.sql`):
+
+| Table | Key columns | Notes |
+| --- | --- | --- |
+| `loans` | `id`, `household_id`, `borrower_id` (user id, must be a member), `amount > 0`, `date`, `due_date` (nullable, ≥ `date`), `note`, `status` (`open`/`paid`), `account_id` (the account the money left), `created_by`, `created_at` | Status is maintained by the database. Members read; only the RPCs write. |
+| `transactions` (changed) | adds `loan_id` (nullable, FK to `loans`, on delete restrict); `type` check gains `loan-in` and `loan-out` | Index on `loan_id`. A check keeps `loan_id` null for every other type and non-null for the two loan types. |
+| `ledger_closings` (changed) | adds `loans` (JSON snapshot) and `loans_outstanding` | See FR-CLS-16. |
+| `ledger_closing_accounts` (changed) | adds `loan_in`, `loan_out` | See FR-CLS-15. |
+| `notification_prefs` kinds | adds `loan_due`, `loan_overdue` | Same default as plan kinds (FR-PLN-10). |
+
 Money columns are `numeric(18,2)`; quantities `numeric(18,6)`.
 
 ### 4.2 V1 data model
@@ -392,6 +438,8 @@ Google Sheet tabs: `Transactions`, `Holdings`, `Realized`. Columns mirror the V2
 - DR-6: Rows dated in a closed month (`transactions`, `sales`, `plan_ledger`) cannot be inserted, updated or deleted (FR-CLS-07).
 - DR-7: `push_subscriptions`, `notification_prefs` and `notifications` are per user: RLS allows a user to see only their own rows.
 - DR-8: Plan ledger amounts are signed (deposit > 0, withdrawal < 0). A plan's cash never goes below zero, and a plan's cash never changes the balance of its account: plans are set-asides, not accounts.
+- DR-9: Loan amounts are positive; the transaction type (`loan-out`, `loan-in`) decides the sign. A loan's outstanding amount never goes below zero, and a loan with repayments is never deleted.
+- DR-10: `loan-in` and `loan-out` rows exist only through the loan RPCs and always carry a `loan_id`; a loan's `loan-out` is created and removed with the loan.
 
 ## 5. External interfaces
 
@@ -440,6 +488,7 @@ Google Sheet tabs: `Transactions`, `Holdings`, `Realized`. Columns mirror the V2
 | NFR-SEC-07 | Closing and reopening are enforced as owner-only inside the RPCs, not just hidden in the UI. |
 | NFR-SEC-08 | Notification payloads contain no amounts on the lock screen beyond what the user turned on; VAPID private keys stay in function secrets. |
 | NFR-SEC-09 | V1 limitation, accepted: `API_SECRET` ships to the browser in `config.js`, so the V1 dashboard is only as private as its URL. |
+| NFR-SEC-10 | Loan RPCs check `private.is_member` and, for the borrower, that the chosen user belongs to the same household; they never trust an id from the client without that check. |
 
 ### 6.2 Performance
 
@@ -461,6 +510,7 @@ Google Sheet tabs: `Transactions`, `Holdings`, `Realized`. Columns mirror the V2
 | NFR-REL-05 | A closed statement's figures equal the live draft figures at the moment of closing, to the rupiah. |
 | NFR-REL-06 | Each due notification is delivered at most once per channel, and within 1 hour of its scheduled time. |
 | NFR-REL-07 | Offline-queued entries dated in a month that was closed meanwhile are not dropped: the sync shows the error and lets the user move the entry to the current month or ask the owner to reopen. |
+| NFR-REL-08 | A closed statement's Loans outstanding total equals the sum of loan balances on the last day of that month, to the rupiah, and equals the live draft at the moment of closing. Two payments saved at once cannot together exceed the outstanding amount (the RPC locks the loan row). |
 
 ### 6.4 Usability
 
@@ -502,6 +552,7 @@ Google Sheet tabs: `Transactions`, `Holdings`, `Realized`. Columns mirror the V2
 | Ledger closing | Close a month; try to add, edit and delete an entry dated in it (all refused); reopen with a reason; check the audit row and that the next month's opening equals the closing balance. Try closing as a member (refused) and closing a month that has not ended (refused). |
 | Plans | Create a plan, add contributions crossing 25/50/75/100%; confirm one notification each. Move the target date so the plan is behind; confirm one "behind" notification. Pause it; confirm no reminders. Run `sh tests/sql/run.sh` (Docker) for the SQL rules. |
 | Plan ledger | Take out more than the plan holds (refused). Assign gold or stock, then more than is free (refused). Check that the account shows set aside and free to spend, and that an expense below the set-aside shows the warning. Sell the lot and confirm it leaves the plan. Close a month with assigned assets and check the statement says "market price" or "cost". |
+| Loans | Lend from Bersama to a member: Bersama's balance falls, income and expense totals do not move. Choose a non-member as borrower (refused). Lend more than the account holds (refused in the app). Repay part of it into Bersama, then more than is owed (refused); repay the rest and confirm the status turns to paid. Close the month a loan was made in: the statement lists it with the outstanding amount; repay it next month and confirm the old statement is unchanged and the new one no longer lists it. Try to add, edit or delete a loan or repayment dated in a closed month (refused). Delete a loan that has a repayment (refused). Run `sh tests/sql/run.sh` for the SQL rules. |
 | Notifications | Subscribe a device, run the `notify` function twice for the same day; confirm no duplicates. Block push; confirm the in-app list still shows them. |
 
 ## 8. Open items
@@ -511,4 +562,5 @@ Google Sheet tabs: `Transactions`, `Holdings`, `Realized`. Columns mirror the V2
 3. Plans (3.13): built (V2.5 to V2.7). Decided: sale proceeds go into plan cash (FR-PLN-17); notification checks keep using cost (FR-PLN-16); the statement uses last-day-of-month prices (FR-PLN-20); "Add money" never creates a transfer automatically.
 4. Notifications (3.14): in-app list, settings and database checks are built. Web Push delivery is not: it needs VAPID keys, the `notify` function, a `push` handler and a per-device switch, and the PWA's `_headers` must allow the push service endpoints. `pg_cron` must be enabled on the Supabase project.
 5. The V2.5 and V2.6 migrations (`20261118000000_plans.sql`, `20261119000000_plan_ledger.sql`) have been run on the live Supabase project. The V2.7 migration (`20261120000000_plan_sale_and_month_end.sql`) must be run, and the `prices` function redeployed (`npx supabase functions deploy prices`), for sale proceeds and month-end prices.
-6. Off the roadmap for now: the Telegram webhook (FR-BOT-05 to FR-BOT-08, built but not deployed), Sheets mode and the nightly mirror (FR-MIG-03, FR-MIG-04), and hosting for the V1 bot and dashboard.
+6. Loans (3.14a, V2.9): built in code and covered by `tests/sql/loans_test.sql`; the migration `20261122000000_loans.sql` still has to be run on the live Supabase project, and the screens have not been tried against it. Decided: money lent from a household account (such as Bersama) to a household member who pays it back; principal only (no interest or schedule); not income or expense. Assumed, to confirm: the borrower shows by the part of their email before the `@` (members have no name field); any member can add loans and repayments (only closing stays owner-only); an account may not be lent more than it holds, enforced in the app only.
+7. Off the roadmap for now: the Telegram webhook (FR-BOT-05 to FR-BOT-08, built but not deployed), Sheets mode and the nightly mirror (FR-MIG-03, FR-MIG-04), and hosting for the V1 bot and dashboard.
