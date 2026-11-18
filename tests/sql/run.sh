@@ -19,18 +19,20 @@ docker cp supabase/migrations/20261121000000_scheduled_jobs.sql ft-pgtest:/t/60.
 docker cp supabase/migrations/20261122000000_loans.sql ft-pgtest:/t/70.sql
 docker cp supabase/migrations/20261123000000_hardening.sql ft-pgtest:/t/80.sql
 docker cp supabase/migrations/20261124000000_query_performance.sql ft-pgtest:/t/90.sql
+docker cp supabase/migrations/20261125000000_plan_spend.sql ft-pgtest:/t/100.sql
 docker cp tests/sql/ledger_test.sql ft-pgtest:/t/ledger.sql
 docker cp tests/sql/plans_test.sql ft-pgtest:/t/plans.sql
 docker cp tests/sql/plan_ledger_test.sql ft-pgtest:/t/plan_ledger.sql
 docker cp tests/sql/loans_test.sql ft-pgtest:/t/loans.sql
 docker cp tests/sql/hardening_test.sql ft-pgtest:/t/hardening.sql
 docker cp tests/sql/rls_test.sql ft-pgtest:/t/rls.sql
+docker cp tests/sql/plan_spend_test.sql ft-pgtest:/t/plan_spend.sql
 status=0
-for t in ledger plans plan_ledger loans hardening rls; do
+for t in ledger plans plan_ledger loans hardening rls plan_spend; do
   echo "== $t"
   docker exec ft-pgtest psql -U postgres -q -c "drop database if exists t" -c "create database t" >/dev/null
   docker exec ft-pgtest psql -U postgres -d t -q -f /t/00.sql >/dev/null 2>&1   # roles already exist after the first run
-  for f in 10 20 30 40 50 60 70 80 90; do
+  for f in 10 20 30 40 50 60 70 80 90 100; do
     docker exec ft-pgtest psql -U postgres -d t -q -v ON_ERROR_STOP=1 -f /t/$f.sql >/dev/null 2>&1 || { echo "migration $f failed"; exit 1; }
   done
   out=$(docker exec ft-pgtest psql -U postgres -d t -q -f /t/$t.sql 2>&1)

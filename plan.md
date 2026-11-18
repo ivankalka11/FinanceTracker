@@ -22,15 +22,22 @@ Supabase is the default database. The phone-first PWA (`pwa/`) is the main front
 | V2.10 | Gold price fallback (public price-cards page when the Emas API fails); visual refresh: burgundy dark-glass theme, glass dropdown menus, calendar and category list, animation fixes | Done; redeploy the `prices` function and the app |
 | V2.11 | Security hardening: integrity hashes on CDN scripts, tighter headers pinned to your Supabase host, Edge Function limits and optional origin lock, household and member limits, V1 formula and bot fixes | Done; rolled out (sign-ups off, hardening migration run, functions and app redeployed) |
 | V2.12 | Query performance for larger data: membership checked once per query instead of per row (11 to 47 times faster reads at 100,000 rows), parallel history download, one write of the offline cache, one-pass totals | Code and tests done; run `20261124000000_query_performance.sql` and redeploy the app |
+| V2.13 | Plan spending: pay a vendor from a plan as a real expense on an account you choose, in partial payments, while the plan keeps its progress; two charts on the monthly statement (expenses by account, expenses by category) | Code and tests done (`plan_spend_test.sql`, all 7 SQL suites pass; UI checked against a fake database); run `20261125000000_plan_spend.sql` on Supabase, then deploy the app |
+| V2.14 | Smart read loading state: photo preview with a scan line, step text with seconds waited, Cancel, 45 second timeout, double-tap protection | Code done (FR-OCR-12); checked in the preview, not yet tried against a live Gemini scan; redeploy the app |
 
 ## Next
 
 1. **V2.12 rollout:** run `supabase/migrations/20261124000000_query_performance.sql` in the SQL Editor, then `python scripts/deploy_pwa.py`. The V2.11 rollout and the GitHub Pages cleanup are done.
+2. **V2.13 rollout:** run `supabase/migrations/20261125000000_plan_spend.sql` in the SQL Editor, then `python scripts/deploy_pwa.py`. Built in: migration `20261125000000_plan_spend.sql`, a Pay from plan sheet on the plan screen, the plan section of the statement, statement charts. Details: BR-51 to BR-56 in `docs/BRD.md`, FR-PLN-21 to FR-PLN-28, FR-CLS-18 and FR-CLS-19 in `docs/SRS.md`.
+3. **V2.14 rollout:** try a smart read on a real photo (also Cancel and a slow case), then `python scripts/deploy_pwa.py`. Built in: `sheetScan` / `runScan` in `pwa/app.js` and the `.scan-busy` styles in `pwa/styles.css`; bump `VERSION` in `pwa/sw.js`. Details: FR-OCR-12 in `docs/SRS.md`.
 2. Candidates when data grows: the scale fixes listed under Decisions made.
 
 ## Decisions made
 
 - Sale proceeds of an assigned holding go into the plan's cash (V2.7).
+- Paying from a plan (V2.13, proposed): a new ledger entry type `spend` is both a real expense on an account and cash leaving the plan. Progress = cash + gold and stocks + money spent, so paying a vendor 5 juta from a 30 juta plan leaves progress at 30 juta (25 juta cash + 5 juta spent). "Take out" stays for money that is released without counting as progress. Gold and stocks are sold first; the proceeds land in plan cash and can then be spent.
+- Statement charts (V2.13, proposed) need no database change: the statement already carries expense per account and per category, for drafts and for stored snapshots.
+- Closing a plan (V2.13, proposed): marking a plan achieved or cancelling it never moves money by itself. A confirmation sheet shows the cash and the gold and stocks still tied to it and lets the user release each; a cancelled plan shows "Cancelled at N%". Selling a holding keeps its current behaviour (proceeds go into the plan's cash unless the plan is cancelled).
 - Notification checks keep valuing assets at cost: they react to money in and out, not to price swings.
 - The closing statement values plan assets at the price of the month's last day (last trading day on or before it), shown with its date. Stocks use Yahoo's daily close; gold uses the Emas API's update-date filter, which could not be confirmed to hold history, so gold falls back to today's price (clearly dated) if it is not found.
 - "Add money" to a plan never creates a transfer automatically.

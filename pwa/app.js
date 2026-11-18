@@ -424,8 +424,11 @@
   };
 
   // The plan ledger: cash entries move cash, asset rows record gold or stock assigned or released.
-  const isCashEntry = (l) => l.entry_type === "deposit" || l.entry_type === "withdrawal" || l.entry_type === "adjustment";
-  const flowOf = (l) => (l.entry_type === "asset_out" ? -l.amount : l.amount); // value that entered (+) or left (-) the plan
+  const isCashEntry = (l) => l.entry_type === "deposit" || l.entry_type === "withdrawal" || l.entry_type === "adjustment" || l.entry_type === "spend";
+  // value that entered (+) or left (-) the plan; a payment made from the plan (spend) still counts as progress
+  const flowOf = (l) => (l.entry_type === "asset_out" ? -l.amount : l.entry_type === "spend" ? 0 : l.amount);
+  // the V2.13 migration adds plans.progress_at_close and the spend functions
+  const spendReady = () => (S.plans.length ? "progress_at_close" in S.plans[0] : true);
   const ledgerTable = () => (S.plansLedger ? "plan_ledger" : "plan_contributions");
   const livePrice = (type, ticker) => (type === "gold" ? S.prices?.gold?.price : S.prices?.stocks?.[ticker]) || null;
   const earmarkOf = (accountId) => S.earmarks[accountId] || 0;
@@ -439,6 +442,7 @@
     const t = today();
     const entries = S.ledger.filter((c) => c.plan_id === p.id);
     const cash = entries.filter(isCashEntry).reduce((s, c) => s + c.amount, 0);
+    const spent = entries.filter((c) => c.entry_type === "spend").reduce((s, c) => s - c.amount, 0); // paid out of the plan, still progress
     const assets = S.planHoldings.filter((h) => h.plan_id === p.id).map((h) => {
       const lot = S.holdings.find((x) => x.id === h.holding_id);
       if (!lot) return null;
@@ -447,7 +451,7 @@
     }).filter(Boolean);
     const assetCost = assets.reduce((s, a) => s + a.cost, 0);
     const assetValue = assets.reduce((s, a) => s + (a.value ?? a.cost), 0);
-    const saved = cash + assetValue;
+    const saved = cash + assetValue + spent;
     const target = p.target_amount;
     const remaining = Math.max(target - saved, 0);
     // whole months from today to the target date, rounded up, at least 1
@@ -463,7 +467,7 @@
       else if (saved < expected - target * 0.05) status = "behind";
     }
     return {
-      entries, cash, assets, assetCost, assetValue, live: assets.every((a) => a.value !== null),
+      entries, cash, spent, closedAt: p.progress_at_close ?? null, assets, assetCost, assetValue, live: assets.every((a) => a.value !== null),
       saved, target, remaining, monthsLeft, expected, status,
       progress: Math.min(saved / target, 1), monthly: remaining / monthsLeft,
       daysLeft: daysBetween(t, p.target_date),
@@ -471,7 +475,7 @@
   }
 
   const runningPlans = () => S.plans.filter((p) => p.status === "active" || p.status === "paused");
-  const planTag = (st) => `<span class="tag ${PLAN_STATUS[st.status][1]}">${PLAN_STATUS[st.status][0]}</span>`;
+  const planTag = (st) => `<span class="tag ${PLAN_STATUS[st.status][1]}">${PLAN_STATUS[st.status][0]}${st.status === "cancelled" && st.closedAt != null ? ` at ${Number(st.closedAt).toLocaleString("id-ID")}%` : ""}</span>`;
   const planBar = (st) => `<span class="bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(st.progress * 100)}"><i style="width:${(st.progress * 100).toFixed(1)}%"></i></span>`;
 
   // ------------------------------------------------------------ notifications
@@ -1247,9 +1251,52 @@
       if (!box || box.dataset.month !== m) return; // closed or replaced while loading
       lastStatement = { m, st };
       box.innerHTML = statementBody(m, st, events);
+      drawStatementCharts(st);
     } catch (e) {
       const box = $("#statement");
       if (box) box.innerHTML = `<div class="error">${esc(isNetworkError(e) ? "Statements need a connection." : e.message || "Could not load the statement.")}</div>`;
+    }
+  }
+
+  // Expenses of the month by account and by category, from figures the statement already carries
+  // (a draft is live, a closed month is its stored snapshot). Top six categories, the rest as "Other".
+  function expenseSplit(st) {
+    const n = (v) => Number(v) || 0;
+    const accounts = (st.accounts || []).filter((a) => n(a.expense) > 0).sort((a, b) => n(b.expense) - n(a.expense));
+    const all = (st.by_category || []).filter((c) => n(c.amount) > 0).sort((a, b) => n(b.amount) - n(a.amount));
+    const cats = all.slice(0, 6).map((c) => ({ name: c.name, amount: n(c.amount) }));
+    const rest = all.slice(6).reduce((s, c) => s + n(c.amount), 0);
+    if (rest > 0) cats.push({ name: "Other", amount: rest });
+    return { accounts, cats };
+  }
+
+  function drawStatementCharts(st) {
+    if (!window.Chart) return;
+    const n = (v) => Number(v) || 0;
+    const { accounts, cats } = expenseSplit(st);
+    const ink = "rgba(255, 255, 255, 0.85)", soft = "rgba(255, 255, 255, 0.6)";
+    const accEl = $("#st-acc"), catEl = $("#st-cat");
+    if (accEl && accounts.length) {
+      charts.push(new Chart(accEl, {
+        type: "bar",
+        data: { labels: accounts.map((a) => a.name), datasets: [{ data: accounts.map((a) => n(a.expense)), backgroundColor: "#cf4d6b", borderRadius: 5, maxBarThickness: 28 }] },
+        options: {
+          indexAxis: "y", maintainAspectRatio: false, animation: reducedMotion() ? false : undefined,
+          plugins: { legend: { display: false }, tooltip: { callbacks: { label: (c) => rp(c.parsed.x) } } },
+          scales: { x: { ticks: { color: soft, callback: (v) => compact(v), maxTicksLimit: 5 }, grid: { color: "rgba(255, 255, 255, 0.1)" } },
+                    y: { ticks: { color: ink }, grid: { display: false } } },
+        },
+      }));
+    }
+    if (catEl && cats.length) {
+      const palette = ["#cf4d6b", "#f0899f", "#9a2a47", "#e3a3b3", "#7d1d38", "#f5c2cd", "#888780"]; // the last one is "Other"
+      charts.push(new Chart(catEl, {
+        type: "doughnut",
+        data: { labels: cats.map((c) => c.name), datasets: [{ data: cats.map((c) => c.amount), backgroundColor: cats.map((c, i) => (c.name === "Other" && i === cats.length - 1 ? palette[6] : palette[i])), borderWidth: 2, borderColor: "#1c1217" }] },
+        options: { maintainAspectRatio: false, cutout: "62%", animation: reducedMotion() ? false : undefined,
+          plugins: { legend: { position: "right", labels: { color: ink, boxWidth: 10, boxHeight: 10, font: { size: 11 } } },
+                     tooltip: { callbacks: { label: (c) => `${c.label}: ${rp(c.parsed)}` } } } },
+      }));
     }
   }
 
@@ -1343,12 +1390,20 @@
     const plans = (st.plans || []).map((p) =>
       `<div class="list-row"><span class="grow">${esc(p.icon)} ${esc(p.name)}<small>${rp(n(p.saved))} of ${rp(n(p.target))} at month end (${n(p.progress).toLocaleString("id-ID")}%)${
         n(p.asset_value) ? ` · includes ${rp(n(p.asset_value))} of gold and stocks at ${p.assets_priced === "market" ? `market price${p.prices_on ? " of " + dateLabel(p.prices_on) : ""}` : "cost"}` : ""}${
-        n(p.withdrawals) ? ` · ${rp(n(p.withdrawals))} taken out` : ""}</small></span>
+        n(p.withdrawals) ? ` · ${rp(n(p.withdrawals))} taken out` : ""}${
+        n(p.spent_total) ? ` · ${rp(n(p.spent_total))} paid from the plan${n(p.spent) ? ` (${rp(n(p.spent))} this month)` : ""}` : ""}</small></span>
         <b class="num ${planNet(p) > 0 ? "pos" : ""}">${planNet(p) ? (planNet(p) > 0 ? "+" : "−") + num(Math.abs(planNet(p))) : "0"}</b></div>`).join("");
 
-    return `${head}${summary}
+    // charts of where the month's expenses went; the text lists are under each chart
+    const split = expenseSplit(st);
+    const accChart = !split.accounts.length ? "" : `<div class="section-label">Expenses by account</div>
+        <div class="chart-box" style="height:${Math.max(110, split.accounts.length * 44 + 40)}px"><canvas id="st-acc" role="img" aria-label="Expenses by account: ${esc(split.accounts.map((a) => `${a.name} ${rp(n(a.expense))}`).join(", "))}"></canvas></div>
+        ${split.accounts.map((a) => `<div class="list-row"><span class="grow">${esc(a.name)}</span><b class="num">${rp(n(a.expense))}</b></div>`).join("")}`;
+    const catChart = !split.cats.length ? "" : `<div class="chart-box" style="height:190px"><canvas id="st-cat" role="img" aria-label="Expenses by category: ${esc(split.cats.map((c) => `${c.name} ${rp(c.amount)}`).join(", "))}"></canvas></div>`;
+
+    return `${head}${summary}${accChart}
       <div class="section-label">Accounts</div>${accounts}
-      <div class="section-label">Expenses by category</div>${cats}
+      <div class="section-label">Expenses by category</div>${catChart}${cats}
       ${plans ? `<div class="section-label">Plans: added this month</div>${plans}` : ""}
       ${loansSection}
       ${checklist}${action}${history}`;
@@ -1367,8 +1422,8 @@
       ...((st.loans || []).length ? [["Loan outstanding at month end", "Borrower", "Date", "Original amount", "Repaid this month", "Repaid to date", "Outstanding", "Due date"],
         ...st.loans.map((l) => ["", l.borrower ? l.borrower.split("@")[0] : "", l.date, l.amount, l.repaid_month, l.repaid_to_date, l.outstanding, l.due_date ?? ""]),
         ["Total outstanding", "", "", "", "", "", st.loans_outstanding], []] : []),
-      ...((st.plans || []).length ? [["Plan", "Added this month", "Taken out", "Cash at month end", "Gold and stocks", "Priced at", "Saved at month end", "Target", "Progress %", "Status"],
-        ...st.plans.map((p) => [p.name, p.contributed, p.withdrawals ?? 0, p.cash ?? p.saved, p.asset_value ?? 0, p.assets_priced ?? "", p.saved, p.target, p.progress, p.status]), []] : []),
+      ...((st.plans || []).length ? [["Plan", "Added this month", "Taken out", "Spent this month", "Spent to date", "Cash at month end", "Gold and stocks", "Priced at", "Saved at month end", "Target", "Progress %", "Status"],
+        ...st.plans.map((p) => [p.name, p.contributed, p.withdrawals ?? 0, p.spent ?? 0, p.spent_total ?? 0, p.cash ?? p.saved, p.asset_value ?? 0, p.assets_priced ?? "", p.saved, p.target, p.progress, p.status]), []] : []),
       ["Date", "Type", "Category", "Description", "Account", "Amount"],
       ...S.txns.filter((t) => monthStart(t.date) === m).slice().reverse().map((t) =>
         [t.date, t.type, t.type.startsWith("transfer") ? "Transfer" : categoryName(t.category_id), t.description, accountName(t.account_id), t.amount]),
@@ -1615,20 +1670,24 @@
     const date = pre.date && (editing || pre.date <= today()) ? pre.date : today();
     const many = scan && scan.rows.length > 1;
     const account = editing ? pre.account || "" : store.get("ft.lastAccount", "");
+    const planSpend = editing ? S.ledger.find((l) => l.entry_type === "spend" && l.transaction_id === pre.id) : null;
+    const planOf = planSpend ? S.plans.find((x) => x.id === planSpend.plan_id) : null;
+    const lock = planSpend ? "disabled" : ""; // amount, account and date of a plan payment are changed from the plan
     openSheet(editing ? "Edit transaction" : scan ? "Check the details" : "Add transaction", `<form data-form="txn">
       <input type="hidden" name="id" value="${esc(pre.id || "")}">
       <input type="hidden" name="type" id="txn-type" value="${type}">
       <input type="hidden" name="source" value="${scan ? "ocr" : "web"}">
       ${scan ? `<p class="hint">${many ? `Row ${scan.index + 1} of ${scan.rows.length}. ` : ""}${scan.engine === "smart" ? "Read by smart read." : "Read on this device."} Fix anything that is wrong; nothing is saved until you tap Save.</p>` : ""}
       <div class="chips">${types.map(([v, l]) => `<button type="button" class="chip ${v === type ? "on" : ""}" data-act="txn-type" data-id="${v}">${l}</button>`).join("")}</div>
-      <label class="f">Amount (Rp)<input id="txn-amount" name="amount" inputmode="numeric" required placeholder="0" data-money value="${pre.amount ? num(pre.amount) : ""}"></label>
+      ${planSpend ? `<p class="hint">Paid from the plan ${planOf ? esc(planOf.icon + " " + planOf.name) : ""}. Amount, account and date are changed from the plan; remove the payment there to undo it.</p>` : ""}
+      <label class="f">Amount (Rp)<input id="txn-amount" name="amount" inputmode="numeric" ${planSpend ? "" : "required"} placeholder="0" data-money value="${pre.amount ? num(pre.amount) : ""}" ${lock}></label>
       <label class="f">Description<input id="txn-desc" name="description" placeholder="e.g. Indomaret" value="${esc(pre.description || "")}"></label>
       <div class="two">
         <label class="f">Category<input id="txn-category" name="category" list="cat-list" required value="${esc(category)}" placeholder="Pick or type"></label>
-        <label class="f">Account<select id="txn-account" name="account">${accountOptions(account, editing)}</select></label>
+        <label class="f">Account<select id="txn-account" name="account" ${lock}>${accountOptions(account, editing)}</select></label>
       </div>
       <datalist id="cat-list">${S.categories.map((c) => `<option value="${esc(c.name)}">`).join("")}</datalist>
-      <label class="f">Date<input id="txn-date" name="date" type="date" value="${date}" min="${minDate()}" max="${editing && date > today() ? date : today()}" required></label>
+      <label class="f">Date<input id="txn-date" name="date" type="date" value="${date}" min="${minDate()}" max="${editing && date > today() ? date : today()}" ${planSpend ? "disabled" : "required"}></label>
       ${minDate() && date < minDate() ? `<p class="hint">${esc(monthLabel(monthStart(date)))} is closed. Pick a date from ${esc(dateLabel(minDate()))}, or ask an owner to reopen the month.</p>` : ""}
       <div class="error"></div>
       <button class="pill" type="submit">${editing ? "Save changes" : "Save"}</button>
@@ -1653,6 +1712,13 @@
       <label class="pill ghost scan-pick">${icon("image")} Choose from gallery<input type="file" accept="image/*" data-scan hidden></label>
       <p class="hint">Read on this device. Your photo is not uploaded.</p>
       <div class="scan-busy" id="scan-busy" hidden><span class="spinner"></span> <span id="scan-busy-text">Reading your photo…</span></div>
+      <div class="scan-load" id="scan-load" hidden>
+        <div class="scan-thumb"><img id="scan-thumb" alt="The photo being read"><i class="scan-line" aria-hidden="true"></i></div>
+        <p class="scan-step" id="scan-step" role="status" aria-live="polite"></p>
+        <p class="hint" id="scan-note"></p>
+        <button class="pill ghost" type="button" data-act="scan-cancel">Cancel</button>
+        <p class="hint">Cancelling only stops the wait. The scan may still count towards today's limit.</p>
+      </div>
       <div class="error"></div>
       <button class="pill dark" type="button" id="scan-smart" data-act="scan-smart" hidden>Try smart read</button>
       <p class="hint" id="scan-smart-hint" hidden>Smart read sends this photo to Google Gemini.</p>
@@ -1740,6 +1806,50 @@
   }
 
   let scanPhoto = null; // { blob, mode } of the last photo, kept for a smart-read retry
+  let scanLoad = null; // the smart-read loading panel while one is showing
+
+  const SMART_SLOW_S = 15, SMART_TIMEOUT_S = 45;
+  // Loading panel for a smart read: photo preview with a scan line, the current step, seconds waited,
+  // a note when it is slow, and Cancel. `stopped` rejects on Cancel, on timeout or when the sheet is closed.
+  function startSmartLoading(box) {
+    const panel = $("#scan-load", box), stepEl = $("#scan-step", box), note = $("#scan-note", box), img = $("#scan-thumb", box);
+    let timer = null, reject;
+    const stopped = new Promise((_, rej) => { reject = rej; });
+    stopped.catch(() => {}); // settled on its own when nothing is racing it
+    box.classList.add("loading");
+    panel.hidden = false;
+    note.textContent = "";
+    img.removeAttribute("src");
+    const api = {
+      stopped,
+      step(text) { stepEl.textContent = text; },
+      thumb(blob) {
+        if (img.dataset.url) URL.revokeObjectURL(img.dataset.url);
+        img.dataset.url = URL.createObjectURL(blob);
+        img.src = img.dataset.url;
+      },
+      // "Asking Gemini… 7s", with a note once it is slow and a stop at the timeout
+      wait(text) {
+        const t0 = Date.now();
+        const tick = () => {
+          if (!box.isConnected) return api.cancel();
+          const s = Math.floor((Date.now() - t0) / 1000);
+          stepEl.textContent = `${text}… ${s}s`;
+          if (s >= SMART_TIMEOUT_S) reject(new Error("Gemini did not answer in time. Try again."));
+          else if (s >= SMART_SLOW_S) note.textContent = "Taking longer than usual. Large or blurry photos can be slow.";
+        };
+        tick();
+        timer = setInterval(tick, 1000);
+      },
+      cancel() { reject(Object.assign(new Error("Cancelled"), { cancelled: true })); },
+      end() {
+        clearInterval(timer);
+        if (img.dataset.url) URL.revokeObjectURL(img.dataset.url);
+        if (box.isConnected) { box.classList.remove("loading"); panel.hidden = true; }
+      },
+    };
+    return api;
+  }
 
   // engine: "device" (default) or "smart". `file` is a new photo; without it the last photo is re-read.
   async function runScan(file, engine = "device") {
@@ -1754,18 +1864,26 @@
       $("#scan-smart", box).hidden = !show;
       $("#scan-smart-hint", box).hidden = !show;
     };
+    if (scanLoad) return; // a smart read is already running
     if (errEl) errEl.textContent = "";
     offerSmart(false);
+    const load = engine === "smart" && box ? startSmartLoading(box) : null;
+    scanLoad = load;
     try {
       if (file) scanPhoto = { blob: null, mode: box.dataset.mode, file };
       if (!scanPhoto) return;
-      busy(true, engine === "smart" ? "Smart read in progress…" : "Reading on this device… the first scan takes longer.");
+      if (load) load.step("Preparing the photo…");
+      else busy(true, engine === "smart" ? "Smart read in progress…" : "Reading on this device… the first scan takes longer.");
       if (!scanPhoto.blob) scanPhoto.blob = await shrinkImage(scanPhoto.file);
       const { blob, mode } = scanPhoto;
       let rows;
       if (engine === "smart") {
         if (!navigator.onLine) throw new Error("Smart read needs a connection.");
-        rows = await readSmart(blob, mode);
+        if (load) {
+          load.thumb(blob);
+          load.wait("Asking Gemini");
+          rows = await Promise.race([readSmart(blob, mode), load.stopped]);
+        } else rows = await readSmart(blob, mode);
       } else {
         const lines = await readTextOnDevice(await blob.arrayBuffer());
         rows = window.ReceiptParser.parse(mode, lines, scanContext());
@@ -1781,10 +1899,12 @@
       scanReview();
     } catch (e) {
       if (box && $("#scan") !== box) return;
-      const message = e.message || "Could not read that photo.";
-      if ($("#scan")) { $(".error", sheetRoot).textContent = message; offerSmart(engine === "device" && !!scanPhoto?.blob); }
+      const message = e.cancelled ? "" : e.message || "Could not read that photo.";
+      if ($("#scan")) { $(".error", sheetRoot).textContent = message; offerSmart(!!scanPhoto?.blob); }
       else toast(message);
     } finally {
+      load?.end();
+      scanLoad = null;
       busy(false);
     }
   }
@@ -1951,7 +2071,7 @@
     const st = planStats(p);
     const cell = (name, value) => `<div><span>${name}</span><b class="num">${value}</b></div>`;
     const running = p.status === "active" && st.status !== "achieved";
-    const ENTRY = { deposit: "Added money", withdrawal: "Taken out", adjustment: "Adjustment", asset_in: "Assigned", asset_out: "Released" };
+    const ENTRY = { deposit: "Added money", withdrawal: "Taken out", adjustment: "Adjustment", asset_in: "Assigned", asset_out: "Released", spend: "Paid from plan" };
     const LEDGER_PREVIEW = 6; // newest entries shown at first; the rest sit behind "Show all"
     const ledgerRows = st.entries.map((c) => {
       const asset = c.entry_type === "asset_in" || c.entry_type === "asset_out";
@@ -1962,11 +2082,16 @@
       const tone = asset ? "gold" : c.entry_type === "deposit" ? "in" : c.entry_type === "withdrawal" ? "xfer" : "out";
       const meta = [{ cls: "when", html: esc(dateLabel(c.date)) }];
       if (c.note) meta.push({ cls: "cat", html: esc(c.note) });
-      if (c.transaction_id) meta.push({ cls: "cat", html: "Linked to a transaction" });
+      const spend = c.entry_type === "spend";
+      const paidFrom = spend ? S.txns.find((t) => t.id === c.transaction_id) : null;
+      if (spend) meta.push({ cls: "acct", html: esc(paidFrom ? accountName(paidFrom.account_id) : "An expense") });
+      else if (c.transaction_id) meta.push({ cls: "cat", html: "Linked to a transaction" });
       return entRow({
         badge, tone, title: `${ENTRY[c.entry_type]}${what}`, meta, dir,
         amount: `${dir < 0 ? "−" : dir > 0 ? "+" : ""}${num(Math.abs(c.amount))}`,
-        action: isLocked(c.date) ? icon("lock") : asset ? "" : `<button class="chip-act" data-act="contribution-delete" data-id="${c.id}">Remove</button>`,
+        action: isLocked(c.date) ? icon("lock") : asset ? ""
+          : spend ? `<button class="chip-act" data-act="spend-delete" data-id="${c.id}">Remove</button>`
+          : `<button class="chip-act" data-act="contribution-delete" data-id="${c.id}">Remove</button>`,
       });
     });
     const contribs = !ledgerRows.length ? `<div class="empty">No money added yet.</div>`
@@ -2001,7 +2126,7 @@
       : st.status === "overdue" ? `The target date has passed with ${rp(st.remaining)} still to go. Move the date or add money.`
       : st.status === "behind" ? `By now it should be about ${rp(st.expected)}. Putting in ${rp(st.monthly)} a month still gets there.`
       : st.status === "paused" ? "Paused: no reminders until you resume it."
-      : st.status === "cancelled" ? "Cancelled. Its history is kept."
+      : st.status === "cancelled" ? `Cancelled${st.closedAt != null ? ` at ${Number(st.closedAt).toLocaleString("id-ID")}%` : ""}. Its history is kept.${st.spent ? ` ${rp(st.spent)} was already paid from it and stays as expenses.` : ""}`
       : `Putting in ${rp(st.monthly)} a month reaches the target by ${esc(fullDate(p.target_date))}.`;
     openSheet(`${p.icon} ${p.name}`, `<div class="plan-detail">
       <div class="row between"><b class="num plan-pct">${Math.round(st.progress * 100)}%</b>${planTag(st)}</div>
@@ -2009,7 +2134,9 @@
       <p class="hint" style="margin:0">${lead}</p>
       <div class="st-grid">
         ${cell("Saved", rp(st.saved))}${cell("Target", rp(st.target))}
-        ${st.assets.length ? cell("Cash", rp(st.cash)) + cell(st.live ? "Gold and stocks (live)" : "Gold and stocks (at cost)", rp(st.assetValue)) : ""}
+        ${st.assets.length || st.spent ? cell("Cash", rp(st.cash)) : ""}
+        ${st.spent ? cell("Paid from plan", rp(st.spent)) : ""}
+        ${st.assets.length ? cell(st.live ? "Gold and stocks (live)" : "Gold and stocks (at cost)", rp(st.assetValue)) : ""}
         ${cell("Remaining", rp(st.remaining))}${cell("Needed / month", running ? rp(st.monthly) : "–")}
         ${cell("Target date", esc(fullDate(p.target_date)))}${cell(st.daysLeft >= 0 ? "Time left" : "Overdue by",
           st.daysLeft >= 0 ? `${st.monthsLeft} month${st.monthsLeft === 1 ? "" : "s"}` : `${-st.daysLeft} day${st.daysLeft === -1 ? "" : "s"}`)}
@@ -2021,9 +2148,13 @@
       <div class="error"></div>
       ${p.status === "cancelled" ? "" : `<div class="plan-actions quick">
         <button class="pill" type="button" data-act="plan-money" data-id="${p.id}">${icon("plus")}<span>Add money</span></button>
-        ${S.plansLedger ? `<button class="pill ghost-light" type="button" data-act="plan-withdraw" data-id="${p.id}">${icon("arrowOut")}<span>Take out</span></button>
+        ${S.plansLedger ? `<button class="pill ghost-light" type="button" data-act="plan-spend" data-id="${p.id}">${icon("wallet")}<span>Pay from plan</span></button>
+        <button class="pill ghost-light" type="button" data-act="plan-withdraw" data-id="${p.id}">${icon("arrowOut")}<span>Take out</span></button>
         <button class="pill ghost-light" type="button" data-act="plan-assign" data-id="${p.id}">${icon("gold")}<span>Gold or stock</span></button>` : ""}
       </div>`}
+      ${(p.status === "achieved" || p.status === "cancelled") && S.plansLedger && (st.cash > 0 || st.assets.length)
+        ? `<p class="hint" style="margin:0">${st.cash > 0 ? `${rp(st.cash)} is still ${p.status === "cancelled" ? "in" : "set aside for"} this plan` : ""}${st.cash > 0 && st.assets.length ? " and " : ""}${st.assets.length ? `${st.assets.length} holding${st.assets.length === 1 ? " is" : "s are"} still assigned` : ""}.</p>
+        <button class="pill ghost-light" type="button" data-act="plan-closeout" data-id="${p.id}">${icon("arrowOut")}<span>Release what is left</span></button>` : ""}
       ${heldRows ? `<div class="section-label">Gold and stocks</div><div class="ent-list">${heldRows}</div>` : ""}
       <div class="section-label">Ledger</div>
       <div class="ent-list">${contribs}</div>
@@ -2144,6 +2275,62 @@
       <p class="hint">This frees the money from the plan. It does not move money between accounts or record an expense.</p>
       <div class="error"></div>
       <button class="pill" type="submit">Take out</button>
+    </form>`);
+  }
+
+  // Pay for something from a plan: a real expense on an account, and the same amount out of the
+  // plan's cash. The plan keeps its progress (saved = cash + gold and stocks + paid from plan).
+  function sheetSpend(planId) {
+    const p = S.plans.find((x) => x.id === planId);
+    if (!p) return;
+    const cash = planStats(p).cash;
+    if (cash <= 0) {
+      openSheet("Pay from plan", `<div class="empty">This plan has no cash to pay from. Add money, or sell gold or stocks into it first.</div>`);
+      return;
+    }
+    openSheet(`Pay from ${p.name}`, `<form data-form="spend">
+      <input type="hidden" name="plan" value="${p.id}">
+      <p class="hint" style="margin-top:0">${rp(cash)} cash is in this plan. The payment is saved as an expense, and the plan keeps its progress.</p>
+      <div class="two">
+        <label class="f">Amount (Rp)<input id="sp-amount" name="amount" inputmode="numeric" data-money required placeholder="0"></label>
+        <label class="f">Paid from account<select id="sp-account" name="account">${accountOptions(p.account_id || store.get("ft.lastAccount", ""))}</select></label>
+      </div>
+      <div class="two">
+        <label class="f">Category<input id="sp-category" name="category" list="cat-list" required placeholder="Pick or type"></label>
+        <label class="f">Date<input id="sp-date" name="date" type="date" required value="${today()}" min="${minDate()}" max="${today()}"></label>
+      </div>
+      <datalist id="cat-list">${S.categories.map((c) => `<option value="${esc(c.name)}">`).join("")}</datalist>
+      <label class="f">Note (optional)<input id="sp-note" name="note" placeholder="e.g. Down payment to the vendor"></label>
+      ${p.account_id ? `<p class="hint">${esc(accountName(p.account_id))} is where this plan is kept. Paying from it keeps its free to spend the same; another account will change it.</p>` : ""}
+      <div class="error"></div>
+      <button class="pill" type="submit">Pay</button>
+    </form>`);
+  }
+
+  // Achieved or cancelled: offer to release what is still tied to the plan. Nothing is released
+  // unless it is ticked, and the status change goes ahead either way. `to` is "achieved",
+  // "cancelled", or null to only release what is left of a plan that is already closed.
+  function sheetClosePlan(planId, to) {
+    const p = S.plans.find((x) => x.id === planId);
+    if (!p) return;
+    const st = planStats(p);
+    const cancel = to === "cancelled";
+    const on = cancel || !to ? "checked" : ""; // release is pre-ticked when cancelling, kept when marking achieved
+    const rows = [];
+    if (st.cash > 0) {
+      rows.push(`<label class="list-row switch-row"><span class="grow">Release ${rp(st.cash)} cash<small>Frees it from the set-aside${p.account_id ? ` on ${esc(accountName(p.account_id))}` : ""}. No money moves.</small></span>
+        <input type="checkbox" class="switch" name="cash" ${on} aria-label="Release the cash"></label>`);
+    }
+    st.assets.forEach((a) => rows.push(`<label class="list-row switch-row"><span class="grow">Release ${esc(qtyLabel(a.lot.asset_type, a.qty))} ${esc(a.lot.name || a.lot.ticker)}<small>Worth ${rp(a.value ?? a.cost)}. It stays in your portfolio.</small></span>
+        <input type="checkbox" class="switch" name="asset" value="${a.id}" ${on} aria-label="Release ${esc(a.lot.name || a.lot.ticker)}"></label>`));
+    const title = cancel ? `Cancel ${p.name}` : to === "achieved" ? `Mark ${p.name} achieved` : `Release from ${p.name}`;
+    openSheet(title, `<form data-form="closeplan">
+      <input type="hidden" name="plan" value="${p.id}">
+      <input type="hidden" name="to" value="${to || ""}">
+      <p class="hint" style="margin-top:0">${rows.length ? "Still tied to this plan. Choose what to release." : "Nothing is tied to this plan any more."}${cancel ? ` It stops at ${Math.round(st.progress * 1000) / 10}% of its target.` : ""}</p>
+      ${rows.join("")}
+      <div class="error"></div>
+      <button class="pill ${cancel ? "danger" : ""}" type="submit">${cancel ? "Cancel plan" : to === "achieved" ? "Mark achieved" : "Release"}</button>
     </form>`);
   }
 
@@ -2315,6 +2502,15 @@
     },
 
     async txn(fd) {
+      // an expense paid from a plan: only its category and description change here (amount, account and date belong to the plan)
+      if (fd.get("id") && S.ledger.some((l) => l.entry_type === "spend" && l.transaction_id === fd.get("id"))) {
+        const category = fd.get("category").trim() || "Other";
+        check(await sb.from("transactions").update({
+          description: fd.get("description").trim(), category_id: await categoryId(category),
+        }).eq("id", fd.get("id")));
+        closeSheet();
+        return reload("Updated");
+      }
       const amount = parseAmount(fd.get("amount"));
       if (amount <= 0) throw new Error("Enter an amount above zero.");
       const type = fd.get("type");
@@ -2511,6 +2707,58 @@
       sheetPlan(plan);
     },
 
+    // Pay from a plan: one expense on an account and the same amount out of the plan's cash.
+    async spend(fd) {
+      const plan = fd.get("plan"), p = S.plans.find((x) => x.id === plan);
+      const amount = parseAmount(fd.get("amount"));
+      if (!(amount > 0)) throw new Error("Enter an amount above Rp 0.");
+      const cash = p ? planStats(p).cash : Infinity;
+      if (amount > cash) throw new Error(`Only ${rp(cash)} cash is in this plan. Pay less, or sell gold or stocks into the plan first.`);
+      const category = fd.get("category").trim() || "Other";
+      const known = S.categories.find((c) => c.name.toLowerCase() === category.toLowerCase());
+      const { error } = await sb.rpc("spend_from_plan", {
+        p_plan: plan, p_amount: amount, p_account: fd.get("account") || null,
+        p_category: known ? known.id : await categoryId(category),
+        p_date: fd.get("date"), p_note: (fd.get("note") || "").trim(),
+      });
+      if (error) {
+        if (error.code === "PGRST202") throw new Error("Paying from a plan is not set up yet. Run supabase/migrations/20261125000000_plan_spend.sql in the Supabase SQL Editor.");
+        throw error;
+      }
+      store.set("ft.lastAccount", fd.get("account"));
+      closeSheet();
+      await reload("Paid from plan");
+      sheetPlan(plan);
+    },
+
+    // Achieved or cancelled: release what the user ticked, remember the progress, change the status.
+    async closeplan(fd) {
+      const plan = fd.get("plan"), to = fd.get("to"), p = S.plans.find((x) => x.id === plan);
+      if (!p) return;
+      const st = planStats(p);
+      const day = minDate() > today() ? minDate() : today(); // the first open day when this month is closed
+      if (fd.get("cash") && st.cash > 0) {
+        check(await sb.from("plan_ledger").insert({
+          household_id: S.household.id, plan_id: plan, entry_type: "withdrawal", amount: -st.cash,
+          date: day, note: "Plan closed",
+        }));
+      }
+      for (const id of fd.getAll("asset")) {
+        const lot = S.holdings.find((h) => h.id === id);
+        check(await sb.rpc("unassign_holding_from_plan", {
+          p_plan: plan, p_holding: id, p_price: lot ? livePrice(lot.asset_type, lot.ticker) : null, p_date: day,
+        }));
+      }
+      if (to) {
+        const changes = { status: to };
+        if (spendReady()) changes.progress_at_close = Math.round(st.progress * 1000) / 10; // % of the target reached
+        check(await sb.from("plans").update(changes).eq("id", plan));
+      }
+      closeSheet();
+      await reload(to === "cancelled" ? "Plan cancelled" : to === "achieved" ? "Marked achieved" : "Released");
+      sheetPlan(plan);
+    },
+
     async assign(fd) {
       const plan = fd.get("plan"), lot = S.holdings.find((h) => h.id === fd.get("holding"));
       const qty = parseQty(fd.get("qty"));
@@ -2613,7 +2861,12 @@
     add: () => { S.scan = null; sheetAdd(); },
     scan: () => sheetScan(),
     "scan-skip": () => scanNext(false),
-    "scan-smart": () => { S.scan = null; return runScan(null, "smart"); },
+    "scan-smart": () => {
+      S.scan = null;
+      if (!$("#scan") && scanPhoto) sheetScan(scanPhoto.mode); // started from the review sheet: show the loading panel
+      return runScan(null, "smart");
+    },
+    "scan-cancel": () => scanLoad?.cancel(),
     "scan-mode": (el) => {
       $("#scan").dataset.mode = el.dataset.id;
       el.parentElement.querySelectorAll(".chip").forEach((c) => c.classList.toggle("on", c === el));
@@ -2803,6 +3056,20 @@
     "plan-edit": (el) => sheetPlanForm(el.dataset.id),
     "plan-money": (el) => sheetContribution(el.dataset.id),
     "plan-withdraw": (el) => sheetWithdraw(el.dataset.id),
+    "plan-spend": (el) => sheetSpend(el.dataset.id),
+    "plan-closeout": (el) => sheetClosePlan(el.dataset.id, null),
+
+    // Remove a payment made from a plan: the expense goes too, and the cash returns to the plan.
+    async "spend-delete"(el) {
+      const c = S.ledger.find((x) => x.id === el.dataset.id);
+      if (!c) return;
+      if (armed !== c.id) { armed = c.id; el.textContent = "Tap again: also removes the expense"; return; }
+      armed = null;
+      check(await sb.rpc("delete_plan_spend", { p_entry: c.id }));
+      closeSheet();
+      await reload("Payment removed");
+      sheetPlan(c.plan_id);
+    },
     "plan-assign": (el) => sheetAssign(el.dataset.id),
 
     async "plan-release"(el) {
@@ -2825,9 +3092,15 @@
     async "plan-status"(el) {
       const p = S.plans.find((x) => x.id === el.dataset.id), to = el.dataset.to;
       if (!p) return;
-      if (to === "cancelled" && armed !== `cancel-${p.id}`) { armed = `cancel-${p.id}`; el.textContent = "Tap again to cancel"; return; }
+      if (S.plansLedger && (to === "cancelled" || to === "achieved")) {
+        // closing a plan: show what is still tied to it and let the user release it (cancelling always asks)
+        const st = planStats(p);
+        if (to === "cancelled" || st.cash > 0 || st.assets.length) return sheetClosePlan(p.id, to);
+      } else if (to === "cancelled" && armed !== `cancel-${p.id}`) { armed = `cancel-${p.id}`; el.textContent = "Tap again to cancel"; return; }
       armed = null;
-      check(await sb.from("plans").update({ status: to }).eq("id", p.id));
+      const changes = { status: to };
+      if (spendReady() && to === "achieved") changes.progress_at_close = Math.round(planStats(p).progress * 1000) / 10;
+      check(await sb.from("plans").update(changes).eq("id", p.id));
       closeSheet();
       await reload({ paused: "Plan paused", active: "Plan resumed", achieved: "Marked achieved", cancelled: "Plan cancelled" }[to]);
       sheetPlan(p.id);

@@ -150,6 +150,12 @@ Priority: **M** = must have, **S** = should have, **C** = could have.
 | BR-37 | Gold and stocks already held can be assigned to a plan. They count towards its total at the live price (at cost when prices are not available), and can be released again. Selling a holding releases it from any plan and the sale proceeds move into that plan's cash. | S | BO-9, BO-3 |
 | BR-38 | The closing statement shows, per plan, the cash at the start and end of the month, money added and taken out, the value of gold and stocks, and whether those were valued at the market price of the month's last day (shown with the date) or at cost. | C | BO-8, BO-9 |
 | BR-39 | The user is warned when an expense takes an account below the amount set aside for plans. | C | BO-9 |
+| BR-51 | Users can pay for something from a plan: an expense is recorded on an account the user picks (with category, date and note) and the same amount leaves the plan's cash. A plan can be spent in several partial payments, never more than its cash. | S | BO-9, BO-3 |
+| BR-52 | Money spent from a plan still counts as progress: saved = cash + gold and stocks + spent so far. Example: a plan of Rp 30 juta pays a vendor Rp 5 juta; it then holds Rp 25 juta cash and Rp 5 juta spent, and still shows Rp 30 juta of progress. Taking money out without spending it (BR-36) still lowers progress. | S | BO-9 |
+| BR-53 | The payment is a normal expense: it lowers the account balance, appears in the month's expenses and categories, and is locked by closing. The account's free to spend does not change, because the expense and the set-aside fall by the same amount. Removing the payment removes the expense and the other way round. | S | BO-9, BO-3 |
+| BR-54 | The closing statement shows, per plan, what was spent this month and in total. | C | BO-8, BO-9 |
+| BR-55 | The monthly statement shows two charts: expenses by account and expenses by category, for a draft month and for a closed one. | S | BO-8 |
+| BR-56 | When a plan is marked achieved or cancelled, the app shows what is still tied to it (cash set aside, gold and stocks assigned) and offers to release it. Nothing is released without the user's confirmation, and a cancelled plan keeps showing the progress it reached. | S | BO-9, BO-3 |
 
 #### 8.3 Loans (money lent from an account to a member)
 
@@ -231,6 +237,8 @@ A loan is money taken out of one of the household's accounts, often the joint ac
 | V2.9 | Loans: lend from an account to a household member, record repayments, list unpaid loans on each month-end statement. | Done (migration `20261122000000_loans.sql` is run on the live project) |
 | V2.10 | Gold price fallback when the Emas API fails; visual refresh (dark burgundy glass theme, matching dropdown menus, calendar and category list). | Done |
 | V2.11 | Security hardening: integrity-checked scripts, tighter headers, function limits, household and member limits. | Done and rolled out |
+| V2.13 | Pay from a plan as an expense while keeping its progress; charts of expenses by account and by category on the statement. | Built in code and tests; migration `20261125000000_plan_spend.sql` still to run |
+| V2.14 | Clear loading state while Gemini reads a photo (preview, steps, cancel, timeout). | Built in code; redeploy the app |
 | Next | Nothing planned. Web Push delivery was considered and dropped; notifications stay in the in-app bell. | Off the roadmap |
 
 ## 14. Approval
