@@ -251,10 +251,11 @@ button, .chip, .pill { touch-action: manipulation; }
   -webkit-mask-image: radial-gradient(circle at 50% 50%, #000 25%, transparent 72%); mask-image: radial-gradient(circle at 50% 50%, #000 25%, transparent 72%); opacity: 0.3; }
 .login-art i + i { background-image: radial-gradient(circle, var(--accent) 1.6px, transparent 2.1px); opacity: 1;
   -webkit-mask-image: linear-gradient(115deg, transparent 38%, #000 50%, transparent 62%); mask-image: linear-gradient(115deg, transparent 38%, #000 50%, transparent 62%);
-  -webkit-mask-size: 320% 100%; mask-size: 320% 100%; -webkit-mask-position: 50% 0; mask-position: 50% 0; }
+  -webkit-mask-size: 320% 100%; mask-size: 320% 100%; -webkit-mask-position: 100% 0; mask-position: 100% 0; }
 @media (prefers-reduced-motion: no-preference) {
-  .login-art i + i { animation: login-sweep 4.5s ease-in-out 3; }   /* three pulses, then still; opacity runs on the compositor, so it never blocks the main thread */
-  @keyframes login-sweep { 0%, 100% { opacity: 0.25; } 50% { opacity: 1; } }
+  /* the light sweeps across the dots three times, starting a few seconds after load so it never competes with the first paint (a mask animation repaints on the main thread) */
+  .login-art i + i { animation: login-sweep 4.5s ease-in-out 3s 3; }
+  @keyframes login-sweep { to { -webkit-mask-position: 0 0; mask-position: 0 0; } }
 }
 .login-copy h1 { margin: 0; font-size: 40px; line-height: 1.1; letter-spacing: -0.03em; font-weight: 800; }
 .login-copy p { margin: 8px 0 0; color: var(--muted); font-size: 14px; }
