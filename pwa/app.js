@@ -7,6 +7,8 @@
   const cfg = window.FINANCE_CONFIG || {};
   const $ = (sel, root = document) => root.querySelector(sel);
   const app = $("#app");
+  // The web font loads after first paint so it never blocks rendering (the page falls back to the system font until it arrives).
+  { const f = document.createElement("link"); f.rel = "stylesheet"; f.href = "https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap"; document.head.appendChild(f); }
   const sheetRoot = $("#sheet-root");
   const TABS = ["home", "stats", "portfolio", "settings", "activity", "ledger", "plans", "notifications", "loans"];
   let sb = null;
@@ -678,10 +680,10 @@
       <div class="login-copy"><h1>Welcome</h1><p>Your household's money, in one place.</p></div>
       <form data-form="login">
         <label class="f">Email<input id="login-email" name="email" type="email" autocomplete="email" required placeholder="you@example.com"></label>
-        <label class="f">Password<input id="login-password" name="password" type="password" autocomplete="current-password" placeholder="Leave empty to get a link"></label>
+        <label class="f">Password<input id="login-password" name="password" type="password" autocomplete="current-password" placeholder="Your password"></label>
         <div class="error" id="login-error">${esc(note)}</div>
         <button class="pill" type="submit">Sign in</button>
-        <button class="pill soft" type="button" data-act="magic">Email me a sign-in link</button>
+        <a class="pill soft" href="https://github.com/ivankalka11/FinanceTracker#readme" target="_blank" rel="noopener noreferrer" style="text-decoration:none">Github Docs</a>
         <p class="hint">Accounts are by invitation only.</p>
       </form>
     </div>`;
@@ -2489,7 +2491,7 @@
   const forms = {
     async login(fd) {
       const email = fd.get("email").trim(), password = fd.get("password");
-      if (!password) throw new Error("Enter your password, or use the sign-in link button.");
+      if (!password) throw new Error("Enter your password.");
       const { error } = await sb.auth.signInWithPassword({ email, password });
       if (error) throw error;
     },
@@ -2966,15 +2968,6 @@
       armed = null;
       check(await sb.from("telegram_links").delete().eq("user_id", S.session.user.id));
       await reload("Telegram unlinked");
-    },
-
-    async magic() {
-      const email = $("#login-email").value.trim(), errEl = $("#login-error");
-      if (!email) { errEl.textContent = "Enter your email first."; return; }
-      const { error } = await sb.auth.signInWithOtp({
-        email, options: { shouldCreateUser: false, emailRedirectTo: location.origin + location.pathname },
-      });
-      errEl.textContent = error ? error.message : "Check your inbox for the sign-in link.";
     },
 
     async signout() {

@@ -251,10 +251,10 @@ button, .chip, .pill { touch-action: manipulation; }
   -webkit-mask-image: radial-gradient(circle at 50% 50%, #000 25%, transparent 72%); mask-image: radial-gradient(circle at 50% 50%, #000 25%, transparent 72%); opacity: 0.3; }
 .login-art i + i { background-image: radial-gradient(circle, var(--accent) 1.6px, transparent 2.1px); opacity: 1;
   -webkit-mask-image: linear-gradient(115deg, transparent 38%, #000 50%, transparent 62%); mask-image: linear-gradient(115deg, transparent 38%, #000 50%, transparent 62%);
-  -webkit-mask-size: 320% 100%; mask-size: 320% 100%; -webkit-mask-position: 100% 0; mask-position: 100% 0; }
+  -webkit-mask-size: 320% 100%; mask-size: 320% 100%; -webkit-mask-position: 50% 0; mask-position: 50% 0; }
 @media (prefers-reduced-motion: no-preference) {
-  .login-art i + i { animation: login-sweep 4.5s ease-in-out 3; }   /* three sweeps, then still: it repaints on the main thread */
-  @keyframes login-sweep { to { -webkit-mask-position: 0 0; mask-position: 0 0; } }
+  .login-art i + i { animation: login-sweep 4.5s ease-in-out 3; }   /* three pulses, then still; opacity runs on the compositor, so it never blocks the main thread */
+  @keyframes login-sweep { 0%, 100% { opacity: 0.25; } 50% { opacity: 1; } }
 }
 .login-copy h1 { margin: 0; font-size: 40px; line-height: 1.1; letter-spacing: -0.03em; font-weight: 800; }
 .login-copy p { margin: 8px 0 0; color: var(--muted); font-size: 14px; }
@@ -268,7 +268,7 @@ button, .chip, .pill { touch-action: manipulation; }
 .login .pill:active { background: #e4e2e0; }
 .login .pill.soft { background: #2a1c22; color: #fff; }
 .login .pill.soft:active { background: #3a2830; }
-.login .hint { margin: 4px 0 0; color: #77767e; text-align: center; }
+.login .hint { margin: 4px 0 0; color: #a09ea8; text-align: center; }
 
 /* ---------- bottom navigation ---------- */
 .nav {
@@ -805,3 +805,7 @@ input[type="date"]:read-only:focus { border-color: var(--accent); }
 .skel { pointer-events: none; user-select: none; }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 .nav.sk-nav { justify-content: space-around; }
+
+/* No blur on things that cannot be seen or touched: the hidden toast and the loading skeleton.
+   A blur layer costs the main thread even when it blurs nothing (it dominated first-load time). */
+#toast:not(.show), .skel *, .sk-nav, .sk-nav * { -webkit-backdrop-filter: none; backdrop-filter: none; }

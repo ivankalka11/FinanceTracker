@@ -118,7 +118,7 @@ Priority: **M** must, **S** should, **C** could. "Version" says where the requir
 
 | ID | Requirement | Pri | Version | Trace |
 | --- | --- | --- | --- | --- |
-| FR-AUTH-01 | Users sign in with email and password, or with an emailed magic link. | M | V2 | BR-13 |
+| FR-AUTH-01 | Users sign in with email and password. The sign-in screen has a "Github Docs" button that opens the project documentation on GitHub (the emailed magic-link button was removed). | M | V2 | BR-13 |
 | FR-AUTH-02 | A signed-in user with no household is taken to onboarding, which creates a household and its first accounts (`create_household(p_name, p_accounts)`); the creator becomes `owner`. | M | V2 | BR-16 |
 | FR-AUTH-03 | An owner can add a member by email (`add_member_by_email`). The member must already have an account. | M | V2 | BR-13 |
 | FR-AUTH-04 | Users can sign out from Settings. | M | V2 | BR-13 |
@@ -501,7 +501,7 @@ Google Sheet tabs: `Transactions`, `Holdings`, `Realized`. Columns mirror the V2
 | NFR-SEC-02 | New tables must enable RLS and follow the same policy shape. |
 | NFR-SEC-03 | The service-role key never reaches the browser; code using it filters every query by `household_id`. |
 | NFR-SEC-04 | `.env`, `Dashboard/config.js` and `pwa/config.js` are never committed, and their values are never printed. |
-| NFR-SEC-05 | The PWA is served with a strict content security policy (including `upgrade-insecure-requests`), `Strict-Transport-Security`, `Cross-Origin-Opener-Policy: same-origin`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`, `nosniff`, camera allowed only for self, and `noindex`. The deploy script narrows the policy's Supabase host to the project's own. |
+| NFR-SEC-05 | The PWA is served with a strict content security policy (including `upgrade-insecure-requests`), `Strict-Transport-Security`, `Cross-Origin-Opener-Policy: same-origin`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`, `nosniff`, and camera allowed only for self (no `noindex`: Lighthouse SEO requires the page to be crawlable; the app is sign-in only). The deploy script narrows the policy's Supabase host to the project's own. |
 | NFR-SEC-06 | The Telegram webhook rejects requests without the correct secret header, compared in constant time. |
 | NFR-SEC-07 | Closing and reopening are enforced as owner-only inside the RPCs, not just hidden in the UI. |
 | NFR-SEC-08 | Notifications are shown inside the app only, so nothing appears on a lock screen. (If push is ever added: generic text, and VAPID private keys in function secrets.) |

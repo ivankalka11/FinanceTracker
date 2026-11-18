@@ -87,7 +87,7 @@ python scripts/deploy_pwa.py
 
 The script builds the config, downloads the on-device scanning models, and uploads a copy of the `pwa` folder whose security headers allow only **your** Supabase project (taken from `SUPABASE_URL` in `.env`). It prints the final address (Cloudflare adds a suffix if the name is taken).
 
-4. In Supabase, open **Authentication → URL Configuration** and set **Site URL** to that address (also add it under **Redirect URLs**). This makes the "Email me a sign-in link" button work; password sign-in works without it.
+4. In Supabase, open **Authentication → URL Configuration** and set **Site URL** to that address (also add it under **Redirect URLs**). Password sign-in works without it; it matters only for auth emails such as invitations and password resets.
 5. On your phone, open the address, sign in, and choose **Add to Home Screen**.
 
 For every later release, run `python scripts/deploy_pwa.py` again. If the main address shows a 404 after an upload, the project's production branch is not `main`: set `CLOUDFLARE_PAGES_BRANCH` in `.env` to that branch, or change **Production branch** in the Cloudflare project settings, then upload again.
